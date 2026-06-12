@@ -1,5 +1,5 @@
 name: Git Config Deployer
-version: "1.0.0"
+version: "1.1.0"
 slug: git_config_deployer
 description: >-
   Review pending git commits for your Home Assistant configuration,

@@ -29,8 +29,29 @@ local branch has diverged from the remote; pulls are fast-forward only.
    **Git Config Deployer** from the Local add-ons section.
 3. Start it. It appears in the sidebar as **Git Config**.
 
-Your configuration directory must already be a git repository with the
-remote configured.
+## First-time setup
+
+The configuration directory does **not** need to be a git repository yet.
+If it isn't (or has no remote / was never pushed), the panel shows a guided
+setup instead of an error:
+
+- **Initialize**: runs `git init`, writes a `.gitignore` that keeps
+  `secrets.yaml`, `.storage/` (UI-managed settings), databases, logs and
+  backups out of the repository, and commits the current configuration
+  as-is. Nothing is converted or changed — UI-managed settings keep
+  working and simply stay local.
+- **Connect a remote**: enter the URL of an (ideally empty) repository;
+  the add-on configures the remote and pushes the branch.
+- **Deploy key**: for SSH remotes, the setup screen can generate an
+  ed25519 key pair (stored in the add-on's private data volume). Add the
+  shown public key to the remote repository with write access — on GitHub
+  under *Settings → Deploy keys*. The generated key is used automatically
+  whenever the `ssh_key` option is empty.
+
+Every setup step is idempotent: if e.g. the push fails because the deploy
+key isn't registered yet, fix that and press the button again. The setup
+screen also shows the equivalent manual `git` commands if you prefer the
+terminal.
 
 ## Options
 
@@ -43,12 +64,14 @@ remote configured.
 
 ### Remote authentication
 
-- **HTTPS**: embed a read token in the remote URL
+- **SSH (recommended)**: generate a deploy key from the setup screen — it
+  is used automatically while `ssh_key` is empty. Alternatively place your
+  own key somewhere inside the config directory (e.g.
+  `/homeassistant/.deploy_key`, mode 600, add it to `.gitignore`) and set
+  `ssh_key` to that path. Host keys are accepted on first use and stored
+  in the add-on's data volume.
+- **HTTPS**: embed a token in the remote URL
   (`https://oauth2:<token>@git.example.com/...`).
-- **SSH**: place a deploy key somewhere inside the config directory
-  (e.g. `/homeassistant/.deploy_key`, mode 600, and add it to `.gitignore`)
-  and set `ssh_key` to that path. Host keys are accepted on first use and
-  stored in the add-on's data volume.
 
 ### Older Supervisor versions
 

@@ -93,6 +93,34 @@
 
   .banner{border:1px solid var(--del);color:var(--del);border-radius:6px;
         padding:10px 12px;margin-bottom:14px;font:13px var(--sans)}
+
+  /* setup wizard */
+  .setup p{margin:8px 0}
+  .setup ol{margin:8px 0;padding-left:22px}
+  .setup ol li{margin:4px 0}
+  .setup code{font:12px var(--mono);color:var(--accent)}
+  .note{border:1px solid var(--line);border-left:3px solid var(--accent);
+        border-radius:6px;padding:8px 12px;font:13px var(--sans);
+        color:var(--muted);margin:10px 0}
+  .formgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px 14px;margin:12px 0}
+  @media (max-width:560px){.formgrid{grid-template-columns:1fr}}
+  .formgrid label{display:flex;flex-direction:column;gap:4px;
+        font:12px var(--sans);color:var(--muted)}
+  .formgrid label.wide{grid-column:1/-1}
+  input[type=text]{background:var(--panel2);border:1px solid var(--line);
+        border-radius:6px;color:var(--text);font:13px var(--mono);
+        padding:8px 10px;width:100%}
+  input[type=text]:focus-visible{outline:2px solid var(--accent);outline-offset:-1px}
+  .pubkey{font:11px/1.4 var(--mono);background:#0c1117;border:1px solid var(--line);
+        border-radius:6px;padding:8px 10px;word-break:break-all;
+        white-space:pre-wrap;user-select:all;margin:8px 0}
+  details.setupblock{margin-top:12px;border-top:1px solid var(--line);padding-top:10px}
+  details.setupblock summary{cursor:pointer;color:var(--muted);
+        font:600 12px var(--sans);text-transform:uppercase;letter-spacing:.06em}
+  details.setupblock[open] summary{margin-bottom:6px}
+  pre.cmds{margin:8px 0;padding:10px 12px;background:#0c1117;
+        border:1px solid var(--line);border-radius:6px;overflow-x:auto;
+        font:12px/1.5 var(--mono)}
   .spin{display:inline-block;width:14px;height:14px;border:2px solid var(--line);
         border-top-color:var(--accent);border-radius:50%;vertical-align:-2px;
         animation:spin .8s linear infinite}
@@ -131,10 +159,186 @@ async function api(path, opts) {
 /* ---------------- status view ---------------- */
 async function loadStatus() {
   app.innerHTML = '<p class="hint"><span class="spin"></span> Fetching from remote…</p>';
-  try { status = await api('api/status'); } 
+  try { status = await api('api/status'); }
   catch (e) { app.innerHTML = `<div class="banner">${esc(e.message)}</div>`; return; }
   if (status.error) { app.innerHTML = `<div class="banner">${esc(status.error)}</div>`; return; }
+  if (status.stage) { renderSetup(); return; }
   renderStatus();
+}
+
+/* ---------------- setup wizard ---------------- */
+function renderSetup() {
+  const s = status;
+  repoline.innerHTML = `${esc(s.repo)} · <b>setup</b>`;
+
+  const yamlNote = s.yaml_files.length
+    ? ` The directory contains ${s.yaml_files.length} YAML file${s.yaml_files.length !== 1 ? 's' : ''}
+        (${esc(s.yaml_files.slice(0, 5).join(', '))}${s.yaml_files.length > 5 ? ', …' : ''}).`
+    : '';
+
+  const sshBlock = `
+    <details class="setupblock" ${s.stage !== 'init' || s.ssh_pubkey ? 'open' : ''}>
+      <summary>SSH access (deploy key)</summary>
+      <p class="hint">For SSH remotes (e.g. <code>git@github.com:you/ha-config.git</code>)
+        the remote must accept a key from this add-on. Generate one here, then add the
+        <b>public</b> key to the remote repository — on GitHub under
+        Settings → Deploy&nbsp;keys, with <b>write access</b> enabled.
+        ${s.ssh_key_option ? `Note: the configured <code>ssh_key</code> option
+        (<code>${esc(s.ssh_key_option)}</code>) takes precedence over a generated key.` : ''}</p>
+      <span id="keyslot">${s.ssh_pubkey
+        ? `<div class="pubkey" id="pubkey">${esc(s.ssh_pubkey)}</div>
+           <button type="button" id="copyKey">Copy public key</button>`
+        : `<button type="button" id="genKey">Generate deploy key</button>`}</span>
+      <span class="hint" id="keymsg"></span>
+    </details>`;
+
+  let intro = '', form = '', btnLabel = '';
+  if (s.stage === 'init') {
+    intro = `
+      <div class="statebig warn">Repository not set up yet</div>
+      <p><code>${esc(s.repo)}</code> is not a usable git repository${s.note ? ` (${esc(s.note)})` : ''}.${yamlNote}
+        This add-on deploys configuration changes that arrive via git, so your
+        configuration directory needs to become a repository first. The button
+        below does it for you:</p>
+      <ol>
+        <li>Run <code>git init</code> in <code>${esc(s.repo)}</code>.</li>
+        <li>Create a <code>.gitignore</code> that keeps <code>secrets.yaml</code>,
+            <code>.storage/</code> (UI-managed settings), databases, logs and
+            backups out of the repository.</li>
+        <li>Commit your current configuration, exactly as it is.</li>
+        <li>Optionally connect a remote and push, so you can edit on another
+            machine and deploy here.</li>
+      </ol>
+      <div class="note">Mostly configuring Home Assistant through the UI? That is
+        fine — those settings live in <code>.storage/</code> and simply stay local.
+        The repository versions the YAML side (<code>configuration.yaml</code>,
+        automations, scripts, …) and you can grow it at your own pace. Nothing
+        about your current setup is changed or converted.</div>`;
+    form = `
+      <div class="formgrid">
+        <label>Branch
+          <input type="text" id="f_branch" value="${esc(s.branch)}"></label>
+        <label>Remote URL <span>(optional, can be added later)</span>
+          <input type="text" id="f_url" placeholder="git@github.com:you/ha-config.git"></label>
+        <label>Commit author name <span>(optional)</span>
+          <input type="text" id="f_name" placeholder="Home Assistant"></label>
+        <label>Commit author e-mail <span>(optional)</span>
+          <input type="text" id="f_email" placeholder="ha@example.com"></label>
+      </div>`;
+    btnLabel = 'Set up repository';
+  } else if (s.stage === 'remote') {
+    intro = `
+      <div class="statebig warn">No remote configured</div>
+      <p>The repository in <code>${esc(s.repo)}</code> exists
+        ${s.head ? `(HEAD <code>${esc(s.head.short)}</code> ${esc(s.head.subject)})` : ''},
+        but it has no remote named <code>${esc(s.remote)}</code> to deploy from.
+        Enter the URL of an (ideally empty) repository on GitHub, GitLab, Gitea, … —
+        the add-on connects it and pushes branch <code>${esc(s.branch)}</code>.</p>`;
+    form = `
+      <div class="formgrid">
+        <label class="wide">Remote URL
+          <input type="text" id="f_url" placeholder="git@github.com:you/ha-config.git"></label>
+      </div>`;
+    btnLabel = 'Connect remote and push';
+  } else { /* stage === 'push' */
+    intro = `
+      <div class="statebig warn">Remote branch not found</div>
+      <p>The remote <code>${esc(s.remote)}</code>
+        (<code>${esc(s.remote_url || '')}</code>) has no branch
+        <code>${esc(s.branch)}</code> yet — most likely nothing has been pushed
+        so far. Push the local branch once; after that the add-on can compare
+        local and remote and deploy incoming commits.</p>
+      ${s.fetch_error ? `<div class="banner">Fetching from the remote also failed —
+        if pushing fails too, fix access first (deploy key below, or the
+        <code>remote</code>/<code>branch</code> add-on options).<br>
+        <span class="sdetail">${esc(s.fetch_error)}</span></div>` : ''}`;
+    btnLabel = `Push '${esc(s.branch)}' to ${esc(s.remote)}`;
+  }
+
+  app.innerHTML = `
+    <section class="card setup">
+      ${intro}
+      ${form}
+      ${sshBlock}
+      <div class="applyrow" style="margin-top:14px">
+        <button class="primary" id="setupBtn" type="button">${btnLabel}</button>
+        <span class="hint">Everything runs locally in ${esc(s.repo)}; re-running is safe.</span>
+      </div>
+      <div id="jobview"></div>
+    </section>
+    <section class="card setup">
+      <h2>Prefer doing it yourself?</h2>
+      <p class="hint">SSH into Home Assistant (e.g. via the “Advanced SSH &amp; Web
+        Terminal” add-on) and run, inside the configuration directory:</p>
+      <pre class="cmds">cd ${esc(s.repo)}
+git init -b ${esc(s.branch)}
+git add -A
+git commit -m "Initial Home Assistant configuration"
+git remote add ${esc(s.remote)} &lt;your-remote-url&gt;
+git push -u ${esc(s.remote)} ${esc(s.branch)}</pre>
+      <p class="hint">Then press <b>Refresh</b> above. Typical workflow afterwards:
+        clone the repository on your computer, edit YAML there, commit and push —
+        then apply the change from this panel with a backup and config check.</p>
+    </section>`;
+
+  document.getElementById('setupBtn').addEventListener('click', startSetup);
+  const gk = document.getElementById('genKey');
+  if (gk) gk.addEventListener('click', genKey);
+  const ck = document.getElementById('copyKey');
+  if (ck) ck.addEventListener('click', copyKey);
+}
+
+async function startSetup() {
+  const val = id => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
+  const body = {
+    branch: val('f_branch') || status.branch,
+    remote_url: val('f_url'),
+    author_name: val('f_name'),
+    author_email: val('f_email'),
+    push: status.stage === 'push',
+  };
+  const jobview = document.getElementById('jobview');
+  if (status.stage === 'remote' && !body.remote_url) {
+    jobview.innerHTML = '<div class="result bad">Please enter a remote URL.</div>';
+    return;
+  }
+  document.getElementById('setupBtn').disabled = true;
+  try { await api('api/setup/init', { method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(body) }); }
+  catch (e) {
+    jobview.innerHTML = `<div class="result bad">${esc(e.message)}</div>`;
+    document.getElementById('setupBtn').disabled = false;
+    return;
+  }
+  pollJob();
+}
+
+async function genKey() {
+  const msg = document.getElementById('keymsg');
+  msg.textContent = ' Generating…';
+  try {
+    const j = await api('api/setup/ssh_key', { method: 'POST' });
+    status.ssh_pubkey = j.pubkey;
+    document.getElementById('keyslot').innerHTML =
+      `<div class="pubkey" id="pubkey">${esc(j.pubkey)}</div>
+       <button type="button" id="copyKey">Copy public key</button>`;
+    document.getElementById('copyKey').addEventListener('click', copyKey);
+    msg.textContent = ' Key generated — add it to the remote repository with write access.';
+  } catch (e) { msg.textContent = ' ' + e.message; }
+}
+
+async function copyKey() {
+  const msg = document.getElementById('keymsg');
+  try {
+    await navigator.clipboard.writeText(status.ssh_pubkey || '');
+    msg.textContent = ' Copied.';
+  } catch {
+    const r = document.createRange();
+    r.selectNodeContents(document.getElementById('pubkey'));
+    const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+    msg.textContent = ' Selected — press Ctrl/Cmd-C to copy.';
+  }
 }
 
 function renderStatus() {
@@ -269,8 +473,10 @@ async function pollJob() {
   try { job = await api('api/apply/status'); }
   catch { pollTimer = setTimeout(pollJob, 2000); return; }
   renderJob(job);
-  if (job.running) pollTimer = setTimeout(pollJob, 1500);
-  else if (job.result && job.result.ok) setTimeout(loadStatus, 2500);
+  if (job.running) { pollTimer = setTimeout(pollJob, 1500); return; }
+  if (job.result && job.result.ok) { setTimeout(loadStatus, 2500); return; }
+  const sb = document.getElementById('setupBtn');
+  if (sb) sb.disabled = false;  // allow retrying setup after a failure
 }
 
 function renderJob(job) {
@@ -296,7 +502,8 @@ document.getElementById('refresh').addEventListener('click', loadStatus);
   try {
     const job = await api('api/apply/status');
     if (job.running) {
-      app.innerHTML = '<section class="card"><h2>Apply in progress</h2><div id="jobview"></div></section>';
+      const title = job.kind === 'setup' ? 'Setup in progress' : 'Apply in progress';
+      app.innerHTML = `<section class="card"><h2>${title}</h2><div id="jobview"></div></section>`;
       renderJob(job); pollJob(); return;
     }
   } catch {}

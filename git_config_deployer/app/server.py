@@ -33,6 +33,40 @@ REMOTE = OPTIONS.get("remote") or "origin"
 BRANCH_OPT = (OPTIONS.get("branch") or "").strip()
 SSH_KEY = (OPTIONS.get("ssh_key") or "").strip()
 
+# Deploy key generated through the setup UI; used when 'ssh_key' is unset.
+DEFAULT_SSH_KEY = "/data/.ssh/id_ed25519"
+
+GITIGNORE_TEMPLATE = """\
+# Created by the Git Config Deployer add-on - adjust as you like.
+
+# Secrets and credentials (keep these out of the repository!)
+secrets.yaml
+.deploy_key*
+*.pem
+
+# Runtime state managed by Home Assistant via the UI (not deployable YAML)
+.storage/
+.cloud/
+.uuid
+.HA_VERSION
+
+# Databases, logs, caches
+*.db
+*.db-shm
+*.db-wal
+*.log
+*.log.*
+home-assistant_v2.*
+deps/
+tts/
+__pycache__/
+
+# Backups and media
+backups/
+media/
+tmp/
+"""
+
 SUPERVISOR = "http://supervisor"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 INGRESS_GATEWAY = "172.30.32.2"
@@ -47,12 +81,22 @@ def log(msg):
     print(f"[git-config-deployer] {msg}", flush=True)
 
 
+def effective_ssh_key():
+    """Explicit 'ssh_key' option wins; otherwise the generated deploy key."""
+    if SSH_KEY:
+        return SSH_KEY
+    if os.path.exists(DEFAULT_SSH_KEY):
+        return DEFAULT_SSH_KEY
+    return ""
+
+
 def git_env():
     env = dict(os.environ)
     env["HOME"] = "/data"  # writable home for git config / known_hosts
-    if SSH_KEY:
+    key = effective_ssh_key()
+    if key:
         env["GIT_SSH_COMMAND"] = (
-            f"ssh -i {SSH_KEY} -o StrictHostKeyChecking=accept-new "
+            f"ssh -i {key} -o StrictHostKeyChecking=accept-new "
             f"-o UserKnownHostsFile=/data/known_hosts"
         )
     else:
@@ -103,6 +147,35 @@ def current_branch():
             "Set the 'branch' option in the add-on configuration."
         )
     return proc.stdout.strip()
+
+
+def remote_url():
+    proc = git("remote", "get-url", REMOTE, check=False)
+    return proc.stdout.strip() if proc.returncode == 0 else None
+
+
+def read_pubkey():
+    try:
+        with open(DEFAULT_SSH_KEY + ".pub", encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return None
+
+
+def ensure_ssh_key():
+    """Generate the deploy key once; return the public key."""
+    pub = read_pubkey()
+    if pub:
+        return pub
+    os.makedirs(os.path.dirname(DEFAULT_SSH_KEY), mode=0o700, exist_ok=True)
+    proc = subprocess.run(
+        ["ssh-keygen", "-t", "ed25519", "-N", "", "-C", "git-config-deployer",
+         "-f", DEFAULT_SSH_KEY],
+        capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError(f"ssh-keygen failed: {proc.stderr.strip()}")
+    log("Generated deploy key " + DEFAULT_SSH_KEY)
+    return read_pubkey()
 
 
 def load_state():
@@ -199,10 +272,48 @@ def changed_files(target):
     return files
 
 
+def setup_status(stage, **extra):
+    """Status payload while the repo is not ready; drives the setup UI.
+
+    Stages: "init" (no repo / no commits), "remote" (no remote configured),
+    "push" (remote configured but the branch does not exist there yet).
+    """
+    branch = BRANCH_OPT or "main"
+    if stage in ("remote", "push"):
+        proc = git("symbolic-ref", "--short", "HEAD", check=False)
+        if proc.returncode == 0:
+            branch = BRANCH_OPT or proc.stdout.strip()
+    yaml_files = []
+    if os.path.isdir(REPO):
+        yaml_files = sorted(
+            f for f in os.listdir(REPO) if f.endswith((".yaml", ".yml")))
+    info = {
+        "stage": stage,
+        "repo": REPO,
+        "remote": REMOTE,
+        "branch": branch,
+        "yaml_files": yaml_files[:20],
+        "ssh_pubkey": read_pubkey(),
+        "ssh_key_option": SSH_KEY,
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+    }
+    info.update(extra)
+    return info
+
+
 def build_status(do_fetch=True):
     ensure_safe_directory()
+    if not os.path.isdir(REPO):
+        return {"error": f"{REPO} does not exist inside the add-on. "
+                         "Check the 'repo_path' option."}
     if not os.path.isdir(os.path.join(REPO, ".git")):
-        return {"error": f"{REPO} is not a git repository."}
+        return setup_status("init")
+    if git("rev-parse", "--verify", "HEAD", check=False).returncode != 0:
+        return setup_status(
+            "init", note="A git repository exists but has no commits yet")
+    url = remote_url()
+    if url is None:
+        return setup_status("remote", head=commit_info("HEAD"))
 
     branch = current_branch()
     target = f"{REMOTE}/{branch}"
@@ -214,9 +325,8 @@ def build_status(do_fetch=True):
             fetch_error = proc.stderr.strip()
 
     if git("rev-parse", "--verify", target, check=False).returncode != 0:
-        return {"error": f"Remote branch {target} not found. "
-                         f"Check the 'remote' and 'branch' options.",
-                "fetch_error": fetch_error}
+        return setup_status("push", remote_url=url, head=commit_info("HEAD"),
+                            fetch_error=fetch_error)
 
     behind = int(git("rev-list", "--count", f"HEAD..{target}").stdout.strip())
     ahead = int(git("rev-list", "--count", f"{target}..HEAD").stdout.strip())
@@ -263,19 +373,24 @@ STEP_CHECK = "check"
 STEP_RELOAD = "reload"
 
 
-def new_job(with_backup):
+def make_job(kind, steps):
+    return {"kind": kind, "running": True,
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "steps": [{"id": sid, "label": label, "status": "pending",
+                       "detail": ""} for sid, label in steps],
+            "result": None}
+
+
+def new_apply_job(with_backup):
     steps = []
     if with_backup:
-        steps.append({"id": STEP_BACKUP, "label": "Create full backup",
-                      "status": "pending", "detail": ""})
+        steps.append((STEP_BACKUP, "Create full backup"))
     steps += [
-        {"id": STEP_PULL, "label": "Pull changes", "status": "pending", "detail": ""},
-        {"id": STEP_CHECK, "label": "Check configuration", "status": "pending", "detail": ""},
-        {"id": STEP_RELOAD, "label": "Reload Home Assistant configuration",
-         "status": "pending", "detail": ""},
+        (STEP_PULL, "Pull changes"),
+        (STEP_CHECK, "Check configuration"),
+        (STEP_RELOAD, "Reload Home Assistant configuration"),
     ]
-    return {"running": True, "started_at": datetime.now(timezone.utc).isoformat(),
-            "steps": steps, "result": None}
+    return make_job("apply", steps)
 
 
 def set_step(job, step_id, status, detail=None):
@@ -391,6 +506,128 @@ def run_apply(with_backup):
         job["running"] = False
 
 
+# ---------------------------------------------------------------- setup job
+
+
+def new_setup_job(with_remote, with_push):
+    steps = [
+        ("init", "Initialize repository"),
+        ("gitignore", "Create .gitignore"),
+        ("commit", "Commit current configuration"),
+    ]
+    if with_remote:
+        steps.append(("remote", f"Configure remote '{REMOTE}'"))
+    if with_push:
+        steps.append(("push", "Push to remote"))
+    return make_job("setup", steps)
+
+
+def run_setup(params):
+    """Idempotent: every step checks the current state and skips cleanly,
+    so the job can be re-run after a partial failure (e.g. push auth)."""
+    job = JOB
+    try:
+        branch = (params.get("branch") or "").strip() or BRANCH_OPT or "main"
+        url = (params.get("remote_url") or "").strip()
+        name = (params.get("author_name") or "").strip() or "Home Assistant"
+        email = ((params.get("author_email") or "").strip()
+                 or "git-config-deployer@home-assistant.local")
+        do_push = bool(params.get("push")) or bool(url)
+
+        # 1. init -------------------------------------------------------
+        set_step(job, "init", "running")
+        if os.path.isdir(os.path.join(REPO, ".git")):
+            set_step(job, "init", "done", "Repository already initialized")
+        else:
+            if git("init", "-b", branch, check=False).returncode != 0:
+                git("init")  # very old git: no -b
+                git("symbolic-ref", "HEAD", f"refs/heads/{branch}")
+            ensure_safe_directory()
+            set_step(job, "init", "done",
+                     f"Created repository on branch '{branch}'")
+        git("config", "user.name", name)
+        git("config", "user.email", email)
+
+        # 2. gitignore --------------------------------------------------
+        set_step(job, "gitignore", "running")
+        gi_path = os.path.join(REPO, ".gitignore")
+        if os.path.exists(gi_path):
+            set_step(job, "gitignore", "done",
+                     "Already exists — left untouched")
+        else:
+            with open(gi_path, "w", encoding="utf-8") as f:
+                f.write(GITIGNORE_TEMPLATE)
+            set_step(job, "gitignore", "done",
+                     "Excludes secrets.yaml, .storage/, databases, logs, backups")
+
+        # 3. commit -----------------------------------------------------
+        set_step(job, "commit", "running")
+        git("add", "-A", timeout=300)
+        has_head = git("rev-parse", "--verify", "HEAD",
+                       check=False).returncode == 0
+        staged = git("diff", "--cached", "--quiet", check=False).returncode != 0
+        if has_head and not staged:
+            set_step(job, "commit", "done", "Nothing new to commit")
+        else:
+            git("commit", "-m", "Initial Home Assistant configuration",
+                timeout=300)
+            head = commit_info("HEAD")
+            n_files = len(git("ls-files").stdout.splitlines())
+            set_step(job, "commit", "done",
+                     f"{head['short']} — {n_files} files tracked")
+
+        # 4. remote -----------------------------------------------------
+        if url:
+            set_step(job, "remote", "running")
+            if remote_url() is None:
+                git("remote", "add", REMOTE, url)
+            else:
+                git("remote", "set-url", REMOTE, url)
+            set_step(job, "remote", "done", url)
+
+        # 5. push -------------------------------------------------------
+        if do_push:
+            if remote_url() is None:
+                raise RuntimeError(
+                    "No remote configured — enter a remote URL first.")
+            set_step(job, "push", "running")
+            cur = (git("symbolic-ref", "--short", "HEAD",
+                       check=False).stdout.strip() or branch)
+            proc = git("push", "-u", REMOTE, cur, check=False, timeout=300)
+            if proc.returncode != 0:
+                err = proc.stderr.strip() or proc.stdout.strip()
+                set_step(job, "push", "error", err)
+                job["result"] = {"ok": False, "message": (
+                    "The local repository is ready, but pushing failed — "
+                    "usually the remote cannot authenticate this add-on yet. "
+                    "For SSH remotes, add the deploy key from the setup "
+                    "screen to the remote repository with write access, then "
+                    "press the button again. Nothing done so far needs to be "
+                    "repeated.")}
+                return
+            set_step(job, "push", "done", f"Pushed '{cur}' to {REMOTE}")
+
+        job["result"] = {"ok": True, "message": (
+            "Repository is ready."
+            + (" Commits pushed from other machines will now show up here "
+               "for review and deployment."
+               if do_push else
+               " No remote is configured yet — connect one to start "
+               "deploying changes through this add-on."))}
+        log("Setup finished")
+    except Exception as exc:  # noqa: BLE001 — surfaced to the UI
+        log(f"Setup failed: {exc}")
+        for step in job["steps"]:
+            if step["status"] == "running":
+                step["status"] = "error"
+                step["detail"] = str(exc)
+            elif step["status"] == "pending":
+                step["status"] = "skipped"
+        job["result"] = {"ok": False, "message": str(exc)}
+    finally:
+        job["running"] = False
+
+
 # ---------------------------------------------------------------- HTTP
 
 
@@ -461,28 +698,45 @@ class Handler(BaseHTTPRequestHandler):
             log(f"Unhandled error on {path}: {exc}")
             self._json({"error": "internal error, see add-on log"}, 500)
 
-    def do_POST(self):
+    def _start_job(self, job, target, *args):
         global JOB
+        with JOB_LOCK:
+            if JOB and JOB.get("running"):
+                self._json({"error": "A job is already in progress."}, 409)
+                return
+            JOB = job
+            threading.Thread(target=target, args=args, daemon=True).start()
+        self._json({"started": True})
+
+    def do_POST(self):
         if not self._authorized():
             return
         path = urlparse(self.path).path
-        if path != "/api/apply":
-            self.send_error(404)
-            return
         length = int(self.headers.get("Content-Length") or 0)
         try:
             payload = json.loads(self.rfile.read(length) or b"{}")
         except ValueError:
             payload = {}
-        with_backup = bool(payload.get("backup", True))
-        with JOB_LOCK:
-            if JOB and JOB.get("running"):
-                self._json({"error": "An apply is already in progress."}, 409)
-                return
-            JOB = new_job(with_backup)
-            threading.Thread(target=run_apply, args=(with_backup,),
-                             daemon=True).start()
-        self._json({"started": True})
+        try:
+            if path == "/api/apply":
+                with_backup = bool(payload.get("backup", True))
+                self._start_job(new_apply_job(with_backup),
+                                run_apply, with_backup)
+            elif path == "/api/setup/init":
+                url = (payload.get("remote_url") or "").strip()
+                do_push = bool(payload.get("push")) or bool(url)
+                self._start_job(new_setup_job(bool(url), do_push),
+                                run_setup, payload)
+            elif path == "/api/setup/ssh_key":
+                self._json({"pubkey": ensure_ssh_key(),
+                            "path": DEFAULT_SSH_KEY})
+            else:
+                self.send_error(404)
+        except (GitError, RuntimeError) as exc:
+            self._json({"error": str(exc)}, 500)
+        except Exception as exc:  # noqa: BLE001
+            log(f"Unhandled error on {path}: {exc}")
+            self._json({"error": "internal error, see add-on log"}, 500)
 
 
 def main():
