@@ -17,6 +17,10 @@ Home Assistant.
   `homeassistant.reload_all`. Each step is reported live; if the config check
   fails, the reload is skipped and the UI tells you how to roll back.
 
+- **Coverage report card**: shows what is git-managed, what could be
+  (with one-click migration of dashboards and UI helpers to YAML — see
+  below), and what stays in Home Assistant by design.
+
 Safety rails: applying is blocked while the working tree is dirty or the
 local branch has diverged from the remote; pulls are fast-forward only.
 
@@ -52,6 +56,67 @@ Every setup step is idempotent: if e.g. the push fails because the deploy
 key isn't registered yet, fix that and press the button again. The setup
 screen also shows the equivalent manual `git` commands if you prefer the
 terminal.
+
+## Moving UI-managed config to YAML
+
+The goal of this add-on is a configuration that lives in git: clone the
+repository on your computer, edit it (e.g. with Claude Code), commit, push —
+then review and apply from this panel. The **Configuration coverage** card
+on the main screen shows how far you are and offers one-click migrations
+for the two things that commonly still live outside the repository:
+
+### Dashboards → Lovelace YAML mode
+
+UI-edited dashboards are stored as JSON in `.storage/lovelace*`. The
+**Migrate dashboards to YAML** button:
+
+1. creates a **full backup**,
+2. exports the default dashboard to `ui-lovelace.yaml` and every additional
+   dashboard to `dashboards/<url-path>.yaml` (dashboard resources / custom
+   cards are carried over too),
+3. adds `lovelace: !include lovelace.yaml` to `configuration.yaml` (the
+   include file holds `mode: yaml` plus the dashboard list) — if a
+   `lovelace:` section already exists, nothing is changed automatically and
+   the UI shows what to merge,
+4. runs the core config check (rolls everything back if it fails), commits,
+   and optionally restarts Home Assistant to activate YAML mode.
+
+Trade-off: in YAML mode the UI dashboard editor is disabled — dashboards
+are edited in the repository from then on. The `.storage` originals are
+left in place (Home Assistant ignores them in YAML mode), so switching
+back is just removing the `lovelace:` section again.
+
+### UI helpers → YAML includes
+
+Helpers created under *Settings → Devices & services → Helpers*
+(`input_boolean`, `input_number`, `input_select`, `input_text`,
+`input_datetime`, `input_button`, `counter`, `timer`, `schedule`) are
+stored in `.storage/<domain>`. The **Migrate helpers to YAML** button:
+
+1. creates a **full backup**,
+2. exports each domain to `helpers/<domain>.yaml`, keyed by the helper's
+   object id — **entity IDs do not change**, so automations, scripts and
+   history keep working,
+3. adds `<domain>: !include helpers/<domain>.yaml` lines to
+   `configuration.yaml` (domains that already exist there are skipped and
+   reported for manual merging),
+4. runs the config check (rolls back on failure), commits, moves the
+   `.storage/<domain>` originals to the add-on's data volume
+   (`/data/migration_backup/…`, kept as a safety net), and **restarts Home
+   Assistant** — required, otherwise the helpers would exist twice.
+
+Helpers created as *config entries* (template, derivative, threshold,
+utility meter, …) have no YAML form and stay in Home Assistant.
+
+### What never moves to git
+
+Integration config entries, device pairings, entity/device registries,
+areas, users and similar runtime state live in `.storage/` by design and
+have no YAML representation. They are covered by Home Assistant backups —
+the coverage card lists them so the boundary is explicit.
+
+Both migrations are also documented step-by-step in the panel
+(“Do it manually instead”) if you prefer the terminal.
 
 ## Options
 

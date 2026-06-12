@@ -6,22 +6,32 @@ Stdlib only. Serves the ingress UI and a small JSON API:
   GET  /                  -> UI
   GET  /api/status        -> fetch remote, report pending commits / files
   GET  /api/diff?path=... -> unified diff for one file (HEAD..remote)
+  GET  /api/coverage      -> what is git-managed vs. UI-managed (report card)
   POST /api/apply         -> start apply job {"backup": bool}
-  GET  /api/apply/status  -> poll the running/finished apply job
+  POST /api/migrate/dashboards -> storage dashboards -> YAML mode {"restart"}
+  POST /api/migrate/helpers    -> UI helpers -> YAML includes
+  GET  /api/apply/status  -> poll the running/finished job (any kind)
 
 Apply pipeline: [backup via Supervisor] -> git merge --ff-only ->
 core config check -> homeassistant.reload_all.
+Migrations live in migrate.py (needs PyYAML).
 """
 
 import json
 import os
 import subprocess
+import sys
 import threading
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
+
+import migrate
+
+# migrate.py reuses this module's git()/supervisor_call()/job helpers.
+migrate.init(sys.modules[__name__])
 
 # ---------------------------------------------------------------- options
 
@@ -686,6 +696,8 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 target = f"{REMOTE}/{current_branch()}"
                 self._json({"path": fpath, "diff": file_diff(fpath, target)})
+            elif path == "/api/coverage":
+                self._json(migrate.scan_coverage())
             elif path == "/api/apply/status":
                 with JOB_LOCK:
                     self._json(JOB or {"running": False, "steps": [],
@@ -730,6 +742,14 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/setup/ssh_key":
                 self._json({"pubkey": ensure_ssh_key(),
                             "path": DEFAULT_SSH_KEY})
+            elif path == "/api/migrate/dashboards":
+                restart = bool(payload.get("restart", True))
+                job = migrate.new_dashboards_job(restart)
+                self._start_job(job, migrate.run_migrate_dashboards,
+                                job, restart)
+            elif path == "/api/migrate/helpers":
+                job = migrate.new_helpers_job()
+                self._start_job(job, migrate.run_migrate_helpers, job)
             else:
                 self.send_error(404)
         except (GitError, RuntimeError) as exc:

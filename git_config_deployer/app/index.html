@@ -121,6 +121,19 @@
   pre.cmds{margin:8px 0;padding:10px 12px;background:#0c1117;
         border:1px solid var(--line);border-radius:6px;overflow-x:auto;
         font:12px/1.5 var(--mono)}
+  /* coverage report card */
+  .covgrp{border-top:1px solid var(--line);padding:10px 0 6px}
+  .covgrp:first-of-type{border-top:none;padding-top:0}
+  .covtitle{font:600 13px var(--sans);margin-bottom:4px}
+  .covtitle.ok{color:var(--add)} .covtitle.move{color:var(--accent)}
+  .covtitle.info{color:var(--muted)}
+  .covgrp ul{margin:4px 0 6px;padding-left:20px}
+  .covgrp li{margin:2px 0}
+  .covgrp .hint{margin:4px 0}
+  .migblock{margin:8px 0 12px}
+  .migblock b{font:600 13px var(--sans)}
+  .migrow{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:8px 0 4px}
+
   .spin{display:inline-block;width:14px;height:14px;border:2px solid var(--line);
         border-top-color:var(--accent);border-radius:50%;vertical-align:-2px;
         animation:spin .8s linear infinite}
@@ -411,11 +424,191 @@ function renderStatus() {
     </section>`;
   }
 
+  /* coverage report card (filled in asynchronously) */
+  h += `<section class="card" id="coverage"><h2>Configuration coverage</h2>
+    <p class="hint"><span class="spin"></span> Scanning configuration…</p></section>`;
+
   app.innerHTML = h;
   document.querySelectorAll('.filehead').forEach(b =>
     b.addEventListener('click', () => toggleDiff(b)));
   const ab = document.getElementById('applyBtn');
   if (ab) ab.addEventListener('click', startApply);
+  loadCoverage();
+}
+
+/* ---------------- coverage / migration ---------------- */
+async function loadCoverage() {
+  const el = document.getElementById('coverage');
+  if (!el) return;
+  try { renderCoverage(await api('api/coverage')); }
+  catch (e) {
+    el.innerHTML = `<h2>Configuration coverage</h2>
+      <div class="banner">${esc(e.message)}</div>`;
+  }
+}
+
+function renderCoverage(cov) {
+  const el = document.getElementById('coverage');
+  if (!el) return;
+  const d = cov.dashboards, hp = cov.helpers, fx = cov.fixed;
+
+  /* in git */
+  const core = cov.git.core_files.filter(f => f.exists && f.tracked)
+    .map(f => f.file);
+  const untracked = cov.git.core_files.filter(f => f.exists && !f.tracked)
+    .map(f => f.file);
+  let inGit = `<ul>
+    <li>${cov.git.tracked_yaml} YAML file${cov.git.tracked_yaml!==1?'s':''} tracked
+      ${core.length ? `(incl. ${esc(core.join(', '))})` : ''}</li>
+    <li>Automations, scripts and scenes are stored as YAML even when edited in
+      the UI — they are already covered by the repository.</li>
+    ${d.yaml_mode ? '<li>Dashboards (Lovelace YAML mode)</li>' : ''}</ul>
+    ${untracked.length ? `<p class="hint">⚠ Not tracked by git yet:
+      ${esc(untracked.join(', '))} — commit them from the repository side.</p>` : ''}`;
+
+  /* can move to git */
+  let move = '';
+  if (d.migratable) {
+    const names = d.storage.map(x => esc(x.title)).join(', ');
+    move += `<div class="migblock"><b>Dashboards</b>
+      <ul><li>${d.storage.length} UI-managed dashboard${d.storage.length!==1?'s':''}:
+        ${names}</li>
+      ${d.resources ? `<li>${d.resources} dashboard resource${d.resources!==1?'s':''}
+        (custom cards)</li>` : ''}</ul>
+      <div class="migrow">
+        <button class="primary migbtn" id="migDash" type="button">
+          Migrate dashboards to YAML…</button>
+        <label class="chk"><input type="checkbox" id="dashRestart" checked>
+          Restart Home Assistant afterwards (activates YAML mode)</label>
+      </div>
+      <p class="hint">Exports every dashboard to a YAML file, commits, and sets
+        <code>lovelace: mode: yaml</code>. Afterwards dashboards are edited via
+        git — the UI dashboard editor is disabled. A full backup is created first.</p>
+      ${manualDashHelp()}
+    </div>`;
+  } else if (!d.yaml_mode) {
+    move += `<p class="hint">Dashboards: only the auto-generated default —
+      nothing UI-managed to migrate.</p>`;
+  }
+  if (hp.migratable) {
+    const list = hp.domains.filter(x => x.count && !x.in_yaml)
+      .map(x => `${esc(x.domain)} ×${x.count}`).join(', ');
+    move += `<div class="migblock"><b>Helpers</b>
+      <ul><li>${hp.storage_total} UI-created helper${hp.storage_total!==1?'s':''}:
+        ${list}</li></ul>
+      ${hp.blocked.length ? `<p class="hint">⚠ ${esc(hp.blocked.join(', '))}
+        already exist${hp.blocked.length===1?'s':''} in configuration.yaml —
+        those domains are skipped (merge manually).</p>` : ''}
+      <div class="migrow">
+        <button class="primary migbtn" id="migHelp" type="button">
+          Migrate helpers to YAML…</button>
+        <span class="hint">Restarts Home Assistant (required).</span>
+      </div>
+      <p class="hint">Exports the helpers to <code>helpers/&lt;domain&gt;.yaml</code>,
+        commits, and removes them from UI storage. Entity IDs stay the same, so
+        automations and history keep working. A full backup is created first.</p>
+      ${manualHelpersHelp()}
+    </div>`;
+  } else if (!hp.storage_total) {
+    move += `<p class="hint">Helpers: no UI-created helpers found.</p>`;
+  }
+  if (!d.migratable && !hp.migratable)
+    move = `<p class="hint">Nothing to migrate — dashboards and helpers are
+      either in YAML mode already or were never created in the UI.</p>`;
+
+  /* stays in HA */
+  const stays = `<ul>
+    <li>${fx.config_entries} integration entr${fx.config_entries!==1?'ies':'y'}
+      ${fx.helper_entries ? `(incl. ${fx.helper_entries} template/derived
+        helper${fx.helper_entries!==1?'s':''})` : ''},
+      ${fx.devices} devices, ${fx.entities} entities, ${fx.areas} areas,
+      ${fx.users} user${fx.users!==1?'s':''}</li></ul>
+    <p class="hint">Integration setup, device pairings, areas and users are
+      runtime state in <code>.storage/</code> — they have no YAML form and are
+      covered by Home Assistant backups, not git.</p>`;
+
+  el.innerHTML = `<h2>Configuration coverage</h2>
+    <div class="covgrp"><div class="covtitle ok">✓ In git (YAML)</div>${inGit}</div>
+    <div class="covgrp"><div class="covtitle move">⚠ Can move to git</div>${move}
+      <div id="migjobview"></div></div>
+    <div class="covgrp"><div class="covtitle info">ℹ Stays in Home Assistant</div>${stays}</div>`;
+
+  const md = document.getElementById('migDash');
+  if (md) md.addEventListener('click', () => startMigrate('dashboards'));
+  const mh = document.getElementById('migHelp');
+  if (mh) mh.addEventListener('click', () => startMigrate('helpers'));
+}
+
+function manualDashHelp() {
+  return `<details class="setupblock"><summary>Do it manually instead</summary>
+    <ol>
+      <li>Convert the <code>data.config</code> object of
+        <code>.storage/lovelace</code> from JSON to YAML and save it as
+        <code>ui-lovelace.yaml</code> (and each <code>.storage/lovelace.&lt;id&gt;</code>
+        as <code>dashboards/&lt;url-path&gt;.yaml</code>).</li>
+      <li>Add to <code>configuration.yaml</code>:</li>
+    </ol>
+    <pre class="cmds">lovelace:
+  mode: yaml
+  dashboards:
+    my-dashboard:           # url path (must contain a hyphen)
+      mode: yaml
+      title: My dashboard
+      filename: dashboards/my-dashboard.yaml</pre>
+    <ol start="3">
+      <li>Restart Home Assistant, verify, then commit and push.</li>
+    </ol></details>`;
+}
+
+function manualHelpersHelp() {
+  return `<details class="setupblock"><summary>Do it manually instead</summary>
+    <ol>
+      <li>For each <code>.storage/input_boolean</code>, <code>counter</code>, …:
+        turn every entry of <code>data.items</code> into YAML keyed by its
+        <code>id</code> (drop the <code>id</code> field), e.g.:</li>
+    </ol>
+    <pre class="cmds"># helpers/input_boolean.yaml
+guest_mode:
+  name: Guest mode
+  icon: mdi:account-check</pre>
+    <ol start="2">
+      <li>Reference it: <code>input_boolean: !include helpers/input_boolean.yaml</code></li>
+      <li>Move the <code>.storage/&lt;domain&gt;</code> file out of the way
+        (otherwise the helpers exist twice) and restart Home Assistant.</li>
+      <li>Verify, then commit and push.</li>
+    </ol></details>`;
+}
+
+async function startMigrate(kind) {
+  let body = {};
+  let msg;
+  if (kind === 'dashboards') {
+    const restart = document.getElementById('dashRestart').checked;
+    body = { restart };
+    msg = 'Export all dashboards to YAML files, commit, and switch Lovelace to YAML mode?\n\n' +
+      '• A full backup is created first.\n' +
+      '• Dashboards are edited via git/YAML afterwards — the UI dashboard editor is disabled.\n' +
+      (restart ? '• Home Assistant restarts at the end to activate YAML mode.'
+               : '• You will need to restart Home Assistant yourself to activate YAML mode.');
+  } else {
+    msg = 'Export all UI-created helpers to YAML files, commit, and remove them from UI storage?\n\n' +
+      '• A full backup is created first.\n' +
+      '• Entity IDs stay the same — automations and history keep working.\n' +
+      '• Helpers are edited via git/YAML afterwards (no UI editing).\n' +
+      '• Home Assistant RESTARTS at the end — this is required.';
+  }
+  if (!confirm(msg)) return;
+  document.querySelectorAll('.migbtn').forEach(b => { b.disabled = true; });
+  try { await api('api/migrate/' + kind, { method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(body) }); }
+  catch (e) {
+    const v = document.getElementById('migjobview');
+    if (v) v.innerHTML = `<div class="result bad">${esc(e.message)}</div>`;
+    document.querySelectorAll('.migbtn').forEach(b => { b.disabled = false; });
+    return;
+  }
+  pollJob();
 }
 
 /* ---------------- diffs ---------------- */
@@ -474,13 +667,24 @@ async function pollJob() {
   catch { pollTimer = setTimeout(pollJob, 2000); return; }
   renderJob(job);
   if (job.running) { pollTimer = setTimeout(pollJob, 1500); return; }
-  if (job.result && job.result.ok) { setTimeout(loadStatus, 2500); return; }
+  if (job.result && job.result.ok) {
+    // If the job restarted Home Assistant, this panel is about to go away
+    // with it — leave the result message visible instead of refreshing.
+    const restarted = (job.steps || []).some(
+      s => s.id === 'restart' && s.status === 'done');
+    if (!restarted) setTimeout(loadStatus, 2500);
+    return;
+  }
   const sb = document.getElementById('setupBtn');
   if (sb) sb.disabled = false;  // allow retrying setup after a failure
+  document.querySelectorAll('.migbtn').forEach(b => { b.disabled = false; });
 }
 
 function renderJob(job) {
-  const v = document.getElementById('jobview');
+  const mig = (job.kind || '').indexOf('migrate') === 0;
+  const v = (mig && document.getElementById('migjobview'))
+    || document.getElementById('jobview')
+    || document.getElementById('migjobview');
   if (!v || !job.steps) return;
   const icon = st => ({done:'✓', error:'✗', running:'<span class="spin"></span>',
                        skipped:'–', pending:'·'}[st] || '·');
@@ -502,7 +706,10 @@ document.getElementById('refresh').addEventListener('click', loadStatus);
   try {
     const job = await api('api/apply/status');
     if (job.running) {
-      const title = job.kind === 'setup' ? 'Setup in progress' : 'Apply in progress';
+      const titles = { setup: 'Setup in progress',
+                       migrate_dashboards: 'Dashboard migration in progress',
+                       migrate_helpers: 'Helper migration in progress' };
+      const title = titles[job.kind] || 'Apply in progress';
       app.innerHTML = `<section class="card"><h2>${title}</h2><div id="jobview"></div></section>`;
       renderJob(job); pollJob(); return;
     }
