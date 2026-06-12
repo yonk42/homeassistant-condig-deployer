@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Git Config Deployer</title>
+<style>
+  :root{
+    --bg:#11161d; --panel:#19212b; --panel2:#1f2935; --line:#2a3645;
+    --text:#cfd8e3; --muted:#7d8a99;
+    --add:#4fc06a; --del:#e06c5f; --accent:#e8a13c; --accent-ink:#1a1206;
+    --mono:ui-monospace,'Cascadia Code','JetBrains Mono',Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 var(--sans)}
+  .wrap{max-width:880px;margin:0 auto;padding:20px 16px 64px}
+
+  header{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:18px}
+  header h1{font:600 17px var(--sans);margin:0;letter-spacing:.2px}
+  .repoline{font:12px var(--mono);color:var(--muted)}
+  .repoline b{color:var(--text);font-weight:600}
+  header button{margin-left:auto}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:8px;
+        padding:14px 16px;margin-bottom:14px}
+  .card h2{font:600 12px var(--sans);text-transform:uppercase;letter-spacing:.08em;
+           color:var(--muted);margin:0 0 10px}
+
+  .statebig{font:600 16px var(--sans)}
+  .statebig.ok{color:var(--add)} .statebig.pending{color:var(--accent)}
+  .statebig.warn{color:var(--del)}
+  .meta{font:12px var(--mono);color:var(--muted);margin-top:6px}
+  .meta code{color:var(--text)}
+
+  /* commit rail */
+  .rail{list-style:none;margin:0;padding:0;position:relative}
+  .rail li{position:relative;padding:4px 0 4px 26px}
+  .rail li::before{content:"";position:absolute;left:7px;top:0;bottom:0;
+        width:2px;background:var(--line)}
+  .rail li:first-child::before{top:14px}
+  .rail li:last-child::before{bottom:auto;height:14px}
+  .rail li::after{content:"";position:absolute;left:3px;top:10px;width:10px;height:10px;
+        border-radius:50%;background:var(--accent);border:2px solid var(--bg)}
+  .rail .sha{font:12px var(--mono);color:var(--accent)}
+  .rail .subj{font:13px var(--mono)}
+  .rail .who{font:11px var(--mono);color:var(--muted)}
+
+  /* files */
+  .file{border-top:1px solid var(--line)}
+  .file:first-of-type{border-top:none}
+  .filehead{display:flex;align-items:center;gap:10px;padding:8px 2px;cursor:pointer;
+        background:none;border:none;width:100%;text-align:left;color:inherit;font:inherit}
+  .filehead:hover{background:var(--panel2)}
+  .filehead:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+  .arrow{color:var(--muted);font:11px var(--mono);width:12px;flex:none}
+  .fpath{font:13px var(--mono);word-break:break-all}
+  .kind{font:10px var(--mono);text-transform:uppercase;letter-spacing:.06em;
+        padding:1px 6px;border-radius:3px;border:1px solid var(--line);color:var(--muted);flex:none}
+  .kind.added{color:var(--add);border-color:var(--add)}
+  .kind.deleted{color:var(--del);border-color:var(--del)}
+  .stat{margin-left:auto;font:12px var(--mono);flex:none}
+  .stat .a{color:var(--add)} .stat .d{color:var(--del)}
+  pre.diff{margin:0 0 8px;padding:10px 12px;background:#0c1117;border:1px solid var(--line);
+        border-radius:6px;overflow-x:auto;font:12px/1.45 var(--mono);tab-size:4}
+  pre.diff .l-add{color:var(--add)} pre.diff .l-del{color:var(--del)}
+  pre.diff .l-hunk{color:#6fb3e0} pre.diff .l-meta{color:var(--muted)}
+
+  /* apply */
+  .applyrow{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  label.chk{display:flex;align-items:center;gap:8px;cursor:pointer}
+  input[type=checkbox]{accent-color:var(--accent);width:16px;height:16px}
+  button{font:600 13px var(--sans);border-radius:6px;border:1px solid var(--line);
+        background:var(--panel2);color:var(--text);padding:8px 14px;cursor:pointer}
+  button:hover{border-color:var(--muted)}
+  button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  button.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+  button.primary:hover{filter:brightness(1.08)}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  .hint{font:12px var(--sans);color:var(--muted)}
+
+  /* steps */
+  .steps{list-style:none;margin:0;padding:0}
+  .steps li{display:flex;gap:10px;padding:6px 0;align-items:baseline}
+  .sicon{font:13px var(--mono);width:18px;flex:none;text-align:center}
+  .s-done .sicon{color:var(--add)} .s-error .sicon{color:var(--del)}
+  .s-running .sicon{color:var(--accent)} .s-pending .sicon,.s-skipped .sicon{color:var(--muted)}
+  .s-skipped{color:var(--muted)}
+  .sdetail{display:block;font:12px var(--mono);color:var(--muted);word-break:break-word}
+  .result{margin-top:10px;padding:10px 12px;border-radius:6px;font-size:13px}
+  .result.ok{border:1px solid var(--add);color:var(--add)}
+  .result.bad{border:1px solid var(--del);color:var(--del)}
+
+  .banner{border:1px solid var(--del);color:var(--del);border-radius:6px;
+        padding:10px 12px;margin-bottom:14px;font:13px var(--sans)}
+  .spin{display:inline-block;width:14px;height:14px;border:2px solid var(--line);
+        border-top-color:var(--accent);border-radius:50%;vertical-align:-2px;
+        animation:spin .8s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  @media (prefers-reduced-motion:reduce){.spin{animation:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Git Config Deployer</h1>
+    <span class="repoline" id="repoline"></span>
+    <button id="refresh" type="button">Refresh</button>
+  </header>
+  <div id="app"><p class="hint"><span class="spin"></span> Checking remote…</p></div>
+</div>
+
+<script>
+"use strict";
+const app = document.getElementById('app');
+const repoline = document.getElementById('repoline');
+let status = null;
+let pollTimer = null;
+
+const esc = s => s.replace(/[&<>"']/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmtDate = iso => { try { return new Date(iso).toLocaleString(); } catch { return iso; } };
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+  return j;
+}
+
+/* ---------------- status view ---------------- */
+async function loadStatus() {
+  app.innerHTML = '<p class="hint"><span class="spin"></span> Fetching from remote…</p>';
+  try { status = await api('api/status'); } 
+  catch (e) { app.innerHTML = `<div class="banner">${esc(e.message)}</div>`; return; }
+  if (status.error) { app.innerHTML = `<div class="banner">${esc(status.error)}</div>`; return; }
+  renderStatus();
+}
+
+function renderStatus() {
+  const s = status;
+  repoline.innerHTML =
+    `${esc(s.repo)} · <b>${esc(s.branch)}</b> → ${esc(s.target)}`;
+  let h = '';
+
+  if (s.fetch_error)
+    h += `<div class="banner">Fetch from remote failed — showing last known state.<br>
+          <span class="sdetail">${esc(s.fetch_error)}</span></div>`;
+
+  /* current state card */
+  const head = s.head ? `<code>${esc(s.head.short)}</code> ${esc(s.head.subject)}` : '—';
+  const la = s.last_apply
+    ? `Last applied via this add-on: <code>${esc(s.last_apply.to)}</code> on ${esc(fmtDate(s.last_apply.at))}`
+    : 'No pulls applied via this add-on yet.';
+  let stateLine, stateCls;
+  if (s.diverged)      { stateLine = 'Local and remote have diverged'; stateCls = 'warn'; }
+  else if (s.behind>0) { stateLine = `${s.behind} commit${s.behind!==1?'s':''} pending`; stateCls = 'pending'; }
+  else                 { stateLine = 'Up to date with remote'; stateCls = 'ok'; }
+  h += `<section class="card"><h2>State</h2>
+    <div class="statebig ${stateCls}">${stateLine}</div>
+    <div class="meta">HEAD ${head}<br>${la}<br>Checked ${esc(fmtDate(s.checked_at))}</div>
+    ${s.dirty ? `<div class="banner" style="margin:10px 0 0">Working tree has uncommitted
+      changes (${esc(s.dirty_files.join(', '))}). Applying is disabled until the tree is clean.</div>` : ''}
+    ${s.diverged ? `<div class="banner" style="margin:10px 0 0">Local branch is ${s.ahead}
+      commit${s.ahead!==1?'s':''} ahead of the remote. Resolve in the repository
+      (rebase or push) before applying.</div>` : ''}
+  </section>`;
+
+  if (s.behind > 0) {
+    /* commits rail (newest first, applied bottom-up) */
+    h += `<section class="card"><h2>Incoming commits</h2><ul class="rail">` +
+      s.commits.map(c => `<li>
+        <span class="sha">${esc(c.short)}</span>
+        <span class="subj">${esc(c.subject)}</span><br>
+        <span class="who">${esc(c.author)} · ${esc(fmtDate(c.date))}</span>
+      </li>`).join('') + `</ul></section>`;
+
+    /* files */
+    h += `<section class="card"><h2>Files changed (${s.files.length})</h2><div id="files">` +
+      s.files.map((f, i) => `
+        <div class="file">
+          <button class="filehead" data-i="${i}" data-path="${esc(f.path)}"
+                  aria-expanded="false" type="button">
+            <span class="arrow" aria-hidden="true">▸</span>
+            <span class="fpath">${esc(f.path)}${f.renamed_from
+              ? ` <span class="hint">(from ${esc(f.renamed_from)})</span>` : ''}</span>
+            <span class="kind ${esc(f.kind)}">${esc(f.kind)}</span>
+            <span class="stat">${f.additions===null ? 'bin'
+              : `<span class="a">+${f.additions}</span> <span class="d">−${f.deletions}</span>`}</span>
+          </button>
+          <div class="diffslot" id="diff-${i}" hidden></div>
+        </div>`).join('') + `</div></section>`;
+
+    /* apply */
+    const blocked = s.dirty || s.diverged;
+    h += `<section class="card"><h2>Apply</h2>
+      <div class="applyrow">
+        <label class="chk"><input type="checkbox" id="backup" checked>
+          Create a full backup before applying</label>
+        <button class="primary" id="applyBtn" type="button" ${blocked?'disabled':''}>
+          Apply ${s.behind} commit${s.behind!==1?'s':''}</button>
+      </div>
+      <p class="hint">Backup → fast-forward pull → configuration check → reload.
+      Reload covers YAML that Home Assistant can reload at runtime; new integrations
+      may still need a restart.</p>
+      <div id="jobview"></div>
+    </section>`;
+  }
+
+  app.innerHTML = h;
+  document.querySelectorAll('.filehead').forEach(b =>
+    b.addEventListener('click', () => toggleDiff(b)));
+  const ab = document.getElementById('applyBtn');
+  if (ab) ab.addEventListener('click', startApply);
+}
+
+/* ---------------- diffs ---------------- */
+async function toggleDiff(btn) {
+  const slot = document.getElementById('diff-' + btn.dataset.i);
+  const open = btn.getAttribute('aria-expanded') === 'true';
+  btn.setAttribute('aria-expanded', String(!open));
+  btn.querySelector('.arrow').textContent = open ? '▸' : '▾';
+  slot.hidden = open;
+  if (open || slot.dataset.loaded) return;
+  slot.innerHTML = '<p class="hint"><span class="spin"></span> Loading diff…</p>';
+  try {
+    const j = await api('api/diff?path=' + encodeURIComponent(btn.dataset.path));
+    slot.innerHTML = `<pre class="diff">${colorDiff(j.diff || '(no textual diff)')}</pre>`;
+    slot.dataset.loaded = '1';
+  } catch (e) { slot.innerHTML = `<div class="banner">${esc(e.message)}</div>`; }
+}
+
+function colorDiff(text) {
+  return text.split('\n').map(l => {
+    const e = esc(l);
+    if (l.startsWith('+++') || l.startsWith('---') || l.startsWith('diff ')
+        || l.startsWith('index ')) return `<span class="l-meta">${e}</span>`;
+    if (l.startsWith('@@')) return `<span class="l-hunk">${e}</span>`;
+    if (l.startsWith('+')) return `<span class="l-add">${e}</span>`;
+    if (l.startsWith('-')) return `<span class="l-del">${e}</span>`;
+    return e;
+  }).join('\n');
+}
+
+/* ---------------- apply ---------------- */
+async function startApply() {
+  const backup = document.getElementById('backup').checked;
+  const n = status.behind;
+  const q = backup
+    ? `Create a full backup, then apply ${n} commit${n!==1?'s':''} and reload?`
+    : `Apply ${n} commit${n!==1?'s':''} WITHOUT a backup and reload?`;
+  if (!confirm(q)) return;
+  document.getElementById('applyBtn').disabled = true;
+  try { await api('api/apply', { method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ backup }) }); }
+  catch (e) {
+    document.getElementById('jobview').innerHTML =
+      `<div class="result bad">${esc(e.message)}</div>`;
+    document.getElementById('applyBtn').disabled = false;
+    return;
+  }
+  pollJob();
+}
+
+async function pollJob() {
+  clearTimeout(pollTimer);
+  let job;
+  try { job = await api('api/apply/status'); }
+  catch { pollTimer = setTimeout(pollJob, 2000); return; }
+  renderJob(job);
+  if (job.running) pollTimer = setTimeout(pollJob, 1500);
+  else if (job.result && job.result.ok) setTimeout(loadStatus, 2500);
+}
+
+function renderJob(job) {
+  const v = document.getElementById('jobview');
+  if (!v || !job.steps) return;
+  const icon = st => ({done:'✓', error:'✗', running:'<span class="spin"></span>',
+                       skipped:'–', pending:'·'}[st] || '·');
+  let h = '<ul class="steps">' + job.steps.map(s => `
+    <li class="s-${s.status}">
+      <span class="sicon">${icon(s.status)}</span>
+      <span>${esc(s.label)}
+        ${s.detail ? `<span class="sdetail">${esc(s.detail)}</span>` : ''}</span>
+    </li>`).join('') + '</ul>';
+  if (job.result)
+    h += `<div class="result ${job.result.ok?'ok':'bad'}">${esc(job.result.message)}</div>`;
+  v.innerHTML = h;
+}
+
+/* ---------------- init ---------------- */
+document.getElementById('refresh').addEventListener('click', loadStatus);
+(async () => {
+  // If an apply is still running (page reopened mid-job), show it.
+  try {
+    const job = await api('api/apply/status');
+    if (job.running) {
+      app.innerHTML = '<section class="card"><h2>Apply in progress</h2><div id="jobview"></div></section>';
+      renderJob(job); pollJob(); return;
+    }
+  } catch {}
+  loadStatus();
+})();
+</script>
+</body>
+</html>
