@@ -1,0 +1,7 @@
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "ARG", "BLE"]
+# ruff format enforces line length; E501 in lint would double-report the same thing
+ignore = ["E501"]

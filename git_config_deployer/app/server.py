@@ -179,9 +179,20 @@ def ensure_ssh_key():
         return pub
     os.makedirs(os.path.dirname(DEFAULT_SSH_KEY), mode=0o700, exist_ok=True)
     proc = subprocess.run(
-        ["ssh-keygen", "-t", "ed25519", "-N", "", "-C", "git-config-deployer",
-         "-f", DEFAULT_SSH_KEY],
-        capture_output=True, text=True)
+        [
+            "ssh-keygen",
+            "-t",
+            "ed25519",
+            "-N",
+            "",
+            "-C",
+            "git-config-deployer",
+            "-f",
+            DEFAULT_SSH_KEY,
+        ],
+        capture_output=True,
+        text=True,
+    )
     if proc.returncode != 0:
         raise RuntimeError(f"ssh-keygen failed: {proc.stderr.strip()}")
     log("Generated deploy key " + DEFAULT_SSH_KEY)
@@ -229,38 +240,57 @@ US = "\x1f"  # unit separator for parsing git log output
 
 
 def commit_info(ref):
-    proc = git("log", "-1", f"--format=%h{US}%H{US}%an{US}%ad{US}%s",
-               "--date=iso-strict", ref, check=False)
+    proc = git(
+        "log",
+        "-1",
+        f"--format=%h{US}%H{US}%an{US}%ad{US}%s",
+        "--date=iso-strict",
+        ref,
+        check=False,
+    )
     if proc.returncode != 0:
         return None
     short, full, author, date, subject = proc.stdout.strip().split(US, 4)
-    return {"short": short, "sha": full, "author": author,
-            "date": date, "subject": subject}
+    return {
+        "short": short,
+        "sha": full,
+        "author": author,
+        "date": date,
+        "subject": subject,
+    }
 
 
 def pending_commits(target):
-    proc = git("log", f"--format=%h{US}%an{US}%ad{US}%s", "--date=iso-strict",
-               f"HEAD..{target}")
+    proc = git(
+        "log",
+        f"--format=%h{US}%an{US}%ad{US}%s",
+        "--date=iso-strict",
+        f"HEAD..{target}",
+    )
     commits = []
     for line in proc.stdout.splitlines():
         if not line.strip():
             continue
         short, author, date, subject = line.split(US, 3)
-        commits.append({"short": short, "author": author,
-                        "date": date, "subject": subject})
+        commits.append(
+            {"short": short, "author": author, "date": date, "subject": subject}
+        )
     return commits  # newest first
 
 
 def changed_files(target):
     """Combine --name-status and --numstat for the HEAD..target range."""
     status = {}
-    for line in git("diff", "--name-status", "-M", f"HEAD..{target}").stdout.splitlines():
+    for line in git(
+        "diff", "--name-status", "-M", f"HEAD..{target}"
+    ).stdout.splitlines():
         parts = line.split("\t")
         if len(parts) >= 3 and parts[0].startswith("R"):
             status[parts[2]] = {"kind": "renamed", "from": parts[1]}
         elif len(parts) >= 2:
             kind = {"A": "added", "M": "modified", "D": "deleted"}.get(
-                parts[0][:1], parts[0])
+                parts[0][:1], parts[0]
+            )
             status[parts[1]] = {"kind": kind}
 
     files = []
@@ -271,14 +301,17 @@ def changed_files(target):
         add, rem, path = parts[0], parts[1], parts[2]
         # numstat rename syntax: "old => new" or {a => b} style; normalize
         meta = status.get(path) or next(
-            (v for k, v in status.items() if k in path), {"kind": "modified"})
-        files.append({
-            "path": path,
-            "kind": meta.get("kind", "modified"),
-            "renamed_from": meta.get("from"),
-            "additions": None if add == "-" else int(add),
-            "deletions": None if rem == "-" else int(rem),
-        })
+            (v for k, v in status.items() if k in path), {"kind": "modified"}
+        )
+        files.append(
+            {
+                "path": path,
+                "kind": meta.get("kind", "modified"),
+                "renamed_from": meta.get("from"),
+                "additions": None if add == "-" else int(add),
+                "deletions": None if rem == "-" else int(rem),
+            }
+        )
     return files
 
 
@@ -296,7 +329,8 @@ def setup_status(stage, **extra):
     yaml_files = []
     if os.path.isdir(REPO):
         yaml_files = sorted(
-            f for f in os.listdir(REPO) if f.endswith((".yaml", ".yml")))
+            f for f in os.listdir(REPO) if f.endswith((".yaml", ".yml"))
+        )
     info = {
         "stage": stage,
         "repo": REPO,
@@ -314,13 +348,16 @@ def setup_status(stage, **extra):
 def build_status(do_fetch=True):
     ensure_safe_directory()
     if not os.path.isdir(REPO):
-        return {"error": f"{REPO} does not exist inside the add-on. "
-                         "Check the 'repo_path' option."}
+        return {
+            "error": f"{REPO} does not exist inside the add-on. "
+            "Check the 'repo_path' option."
+        }
     if not os.path.isdir(os.path.join(REPO, ".git")):
         return setup_status("init")
     if git("rev-parse", "--verify", "HEAD", check=False).returncode != 0:
         return setup_status(
-            "init", note="A git repository exists but has no commits yet")
+            "init", note="A git repository exists but has no commits yet"
+        )
     url = remote_url()
     if url is None:
         return setup_status("remote", head=commit_info("HEAD"))
@@ -335,12 +372,17 @@ def build_status(do_fetch=True):
             fetch_error = proc.stderr.strip()
 
     if git("rev-parse", "--verify", target, check=False).returncode != 0:
-        return setup_status("push", remote_url=url, head=commit_info("HEAD"),
-                            fetch_error=fetch_error)
+        return setup_status(
+            "push", remote_url=url, head=commit_info("HEAD"), fetch_error=fetch_error
+        )
 
     behind = int(git("rev-list", "--count", f"HEAD..{target}").stdout.strip())
     ahead = int(git("rev-list", "--count", f"{target}..HEAD").stdout.strip())
-    dirty = [l for l in git("status", "--porcelain").stdout.splitlines() if l.strip()]
+    dirty = [
+        line
+        for line in git("status", "--porcelain").stdout.splitlines()
+        if line.strip()
+    ]
 
     state = load_state()
     status = {
@@ -354,7 +396,7 @@ def build_status(do_fetch=True):
         "ahead": ahead,
         "diverged": behind > 0 and ahead > 0,
         "dirty": bool(dirty),
-        "dirty_files": [l[3:] for l in dirty][:20],
+        "dirty_files": [line[3:] for line in dirty][:20],
         "fetch_error": fetch_error,
         "last_apply": state.get("last_apply"),
         "checked_at": datetime.now(timezone.utc).isoformat(),
@@ -384,11 +426,16 @@ STEP_RELOAD = "reload"
 
 
 def make_job(kind, steps):
-    return {"kind": kind, "running": True,
-            "started_at": datetime.now(timezone.utc).isoformat(),
-            "steps": [{"id": sid, "label": label, "status": "pending",
-                       "detail": ""} for sid, label in steps],
-            "result": None}
+    return {
+        "kind": kind,
+        "running": True,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "steps": [
+            {"id": sid, "label": label, "status": "pending", "detail": ""}
+            for sid, label in steps
+        ],
+        "result": None,
+    }
 
 
 def new_apply_job(with_backup):
@@ -427,21 +474,26 @@ def run_apply(with_backup):
         if int(git("rev-list", "--count", f"{target}..HEAD").stdout.strip()) > 0:
             raise RuntimeError(
                 "Local branch has diverged from the remote. "
-                "Resolve this in the repository before applying.")
+                "Resolve this in the repository before applying."
+            )
         if git("status", "--porcelain").stdout.strip():
             raise RuntimeError(
                 "Working tree has uncommitted changes. "
-                "Commit or stash them before applying.")
+                "Commit or stash them before applying."
+            )
 
         # 1. Backup ---------------------------------------------------
         if with_backup:
             set_step(job, STEP_BACKUP, "running")
             stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-            name = (f"Before git pull {old['short']}..{remote_head['short']} "
-                    f"({n_commits} commit{'s' if n_commits != 1 else ''}, {stamp})")
+            name = (
+                f"Before git pull {old['short']}..{remote_head['short']} "
+                f"({n_commits} commit{'s' if n_commits != 1 else ''}, {stamp})"
+            )
             log(f"Creating full backup: {name}")
-            resp = supervisor_call("POST", "/backups/new/full",
-                                   {"name": name}, timeout=3600)
+            resp = supervisor_call(
+                "POST", "/backups/new/full", {"name": name}, timeout=3600
+            )
             slug = (resp.get("data") or {}).get("slug")
             if resp.get("result") != "ok" or not slug:
                 raise RuntimeError(f"Backup failed: {resp}")
@@ -452,58 +504,81 @@ def run_apply(with_backup):
         set_step(job, STEP_PULL, "running")
         git("merge", "--ff-only", target, timeout=120)
         new = commit_info("HEAD")
-        set_step(job, STEP_PULL, "done",
-                 f"{old['short']} → {new['short']} ({n_commits} commit"
-                 f"{'s' if n_commits != 1 else ''})")
+        set_step(
+            job,
+            STEP_PULL,
+            "done",
+            f"{old['short']} → {new['short']} ({n_commits} commit"
+            f"{'s' if n_commits != 1 else ''})",
+        )
         log(f"Pulled {old['short']}..{new['short']}")
 
         # 3. Config check ---------------------------------------------
         set_step(job, STEP_CHECK, "running")
-        check = supervisor_call("POST", "/core/api/config/core/check_config",
-                                timeout=300)
+        check = supervisor_call(
+            "POST", "/core/api/config/core/check_config", timeout=300
+        )
         if check.get("result") != "valid":
             errors = check.get("errors") or "unknown error"
             set_step(job, STEP_CHECK, "error", str(errors))
-            set_step(job, STEP_RELOAD, "skipped",
-                     "Skipped because the configuration is invalid.")
+            set_step(
+                job,
+                STEP_RELOAD,
+                "skipped",
+                "Skipped because the configuration is invalid.",
+            )
             job["result"] = {
                 "ok": False,
-                "message": ("Changes were pulled, but the configuration is now "
-                            "invalid and was NOT reloaded. Fix the configuration "
-                            "and retry, or restore the backup. To roll back the "
-                            f"files: git reset --hard {old['short']}"),
+                "message": (
+                    "Changes were pulled, but the configuration is now "
+                    "invalid and was NOT reloaded. Fix the configuration "
+                    "and retry, or restore the backup. To roll back the "
+                    f"files: git reset --hard {old['short']}"
+                ),
                 "backup": backup_ref,
-                "old": old, "new": new,
+                "old": old,
+                "new": new,
             }
             return
         set_step(job, STEP_CHECK, "done", "Configuration valid")
 
         # 4. Reload ----------------------------------------------------
         set_step(job, STEP_RELOAD, "running")
-        supervisor_call("POST", "/core/api/services/homeassistant/reload_all",
-                        timeout=300)
-        set_step(job, STEP_RELOAD, "done",
-                 "All reloadable YAML configuration reloaded")
+        supervisor_call(
+            "POST", "/core/api/services/homeassistant/reload_all", timeout=300
+        )
+        set_step(job, STEP_RELOAD, "done", "All reloadable YAML configuration reloaded")
         log("reload_all triggered")
 
-        save_state({"last_apply": {
-            "at": datetime.now(timezone.utc).isoformat(),
-            "from": old["short"], "to": new["short"],
-            "commits": n_commits,
-            "backup": backup_ref,
-        }})
+        save_state(
+            {
+                "last_apply": {
+                    "at": datetime.now(timezone.utc).isoformat(),
+                    "from": old["short"],
+                    "to": new["short"],
+                    "commits": n_commits,
+                    "backup": backup_ref,
+                }
+            }
+        )
         job["result"] = {
             "ok": True,
-            "message": (f"Applied {n_commits} commit"
-                        f"{'s' if n_commits != 1 else ''} "
-                        f"({old['short']} → {new['short']}) and reloaded the "
-                        "configuration."
-                        + (f" Restore point: backup “{backup_ref['name']}”."
-                           if backup_ref else "")),
+            "message": (
+                f"Applied {n_commits} commit"
+                f"{'s' if n_commits != 1 else ''} "
+                f"({old['short']} → {new['short']}) and reloaded the "
+                "configuration."
+                + (
+                    f" Restore point: backup “{backup_ref['name']}”."
+                    if backup_ref
+                    else ""
+                )
+            ),
             "backup": backup_ref,
-            "old": old, "new": new,
+            "old": old,
+            "new": new,
         }
-    except Exception as exc:  # surfaced to the UI
+    except Exception as exc:  # noqa: BLE001 — surfaced to the UI
         log(f"Apply failed: {exc}")
         for step in job["steps"]:
             if step["status"] == "running":
@@ -540,8 +615,9 @@ def run_setup(params):
         branch = (params.get("branch") or "").strip() or BRANCH_OPT or "main"
         url = (params.get("remote_url") or "").strip()
         name = (params.get("author_name") or "").strip() or "Home Assistant"
-        email = ((params.get("author_email") or "").strip()
-                 or "git-config-deployer@home-assistant.local")
+        email = (
+            params.get("author_email") or ""
+        ).strip() or "git-config-deployer@home-assistant.local"
         do_push = bool(params.get("push")) or bool(url)
 
         # 1. init -------------------------------------------------------
@@ -553,8 +629,7 @@ def run_setup(params):
                 git("init")  # very old git: no -b
                 git("symbolic-ref", "HEAD", f"refs/heads/{branch}")
             ensure_safe_directory()
-            set_step(job, "init", "done",
-                     f"Created repository on branch '{branch}'")
+            set_step(job, "init", "done", f"Created repository on branch '{branch}'")
         git("config", "user.name", name)
         git("config", "user.email", email)
 
@@ -562,29 +637,31 @@ def run_setup(params):
         set_step(job, "gitignore", "running")
         gi_path = os.path.join(REPO, ".gitignore")
         if os.path.exists(gi_path):
-            set_step(job, "gitignore", "done",
-                     "Already exists — left untouched")
+            set_step(job, "gitignore", "done", "Already exists — left untouched")
         else:
             with open(gi_path, "w", encoding="utf-8") as f:
                 f.write(GITIGNORE_TEMPLATE)
-            set_step(job, "gitignore", "done",
-                     "Excludes secrets.yaml, .storage/, databases, logs, backups")
+            set_step(
+                job,
+                "gitignore",
+                "done",
+                "Excludes secrets.yaml, .storage/, databases, logs, backups",
+            )
 
         # 3. commit -----------------------------------------------------
         set_step(job, "commit", "running")
         git("add", "-A", timeout=300)
-        has_head = git("rev-parse", "--verify", "HEAD",
-                       check=False).returncode == 0
+        has_head = git("rev-parse", "--verify", "HEAD", check=False).returncode == 0
         staged = git("diff", "--cached", "--quiet", check=False).returncode != 0
         if has_head and not staged:
             set_step(job, "commit", "done", "Nothing new to commit")
         else:
-            git("commit", "-m", "Initial Home Assistant configuration",
-                timeout=300)
+            git("commit", "-m", "Initial Home Assistant configuration", timeout=300)
             head = commit_info("HEAD")
             n_files = len(git("ls-files").stdout.splitlines())
-            set_step(job, "commit", "done",
-                     f"{head['short']} — {n_files} files tracked")
+            set_step(
+                job, "commit", "done", f"{head['short']} — {n_files} files tracked"
+            )
 
         # 4. remote -----------------------------------------------------
         if url:
@@ -598,32 +675,43 @@ def run_setup(params):
         # 5. push -------------------------------------------------------
         if do_push:
             if remote_url() is None:
-                raise RuntimeError(
-                    "No remote configured — enter a remote URL first.")
+                raise RuntimeError("No remote configured — enter a remote URL first.")
             set_step(job, "push", "running")
-            cur = (git("symbolic-ref", "--short", "HEAD",
-                       check=False).stdout.strip() or branch)
+            cur = (
+                git("symbolic-ref", "--short", "HEAD", check=False).stdout.strip()
+                or branch
+            )
             proc = git("push", "-u", REMOTE, cur, check=False, timeout=300)
             if proc.returncode != 0:
                 err = proc.stderr.strip() or proc.stdout.strip()
                 set_step(job, "push", "error", err)
-                job["result"] = {"ok": False, "message": (
-                    "The local repository is ready, but pushing failed — "
-                    "usually the remote cannot authenticate this add-on yet. "
-                    "For SSH remotes, add the deploy key from the setup "
-                    "screen to the remote repository with write access, then "
-                    "press the button again. Nothing done so far needs to be "
-                    "repeated.")}
+                job["result"] = {
+                    "ok": False,
+                    "message": (
+                        "The local repository is ready, but pushing failed — "
+                        "usually the remote cannot authenticate this add-on yet. "
+                        "For SSH remotes, add the deploy key from the setup "
+                        "screen to the remote repository with write access, then "
+                        "press the button again. Nothing done so far needs to be "
+                        "repeated."
+                    ),
+                }
                 return
             set_step(job, "push", "done", f"Pushed '{cur}' to {REMOTE}")
 
-        job["result"] = {"ok": True, "message": (
-            "Repository is ready."
-            + (" Commits pushed from other machines will now show up here "
-               "for review and deployment."
-               if do_push else
-               " No remote is configured yet — connect one to start "
-               "deploying changes through this add-on."))}
+        job["result"] = {
+            "ok": True,
+            "message": (
+                "Repository is ready."
+                + (
+                    " Commits pushed from other machines will now show up here "
+                    "for review and deployment."
+                    if do_push
+                    else " No remote is configured yet — connect one to start "
+                    "deploying changes through this add-on."
+                )
+            ),
+        }
         log("Setup finished")
     except Exception as exc:  # noqa: BLE001 — surfaced to the UI
         log(f"Setup failed: {exc}")
@@ -700,8 +788,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(migrate.scan_coverage())
             elif path == "/api/apply/status":
                 with JOB_LOCK:
-                    self._json(JOB or {"running": False, "steps": [],
-                                       "result": None})
+                    self._json(JOB or {"running": False, "steps": [], "result": None})
             else:
                 self.send_error(404)
         except (GitError, RuntimeError) as exc:
@@ -732,21 +819,17 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path == "/api/apply":
                 with_backup = bool(payload.get("backup", True))
-                self._start_job(new_apply_job(with_backup),
-                                run_apply, with_backup)
+                self._start_job(new_apply_job(with_backup), run_apply, with_backup)
             elif path == "/api/setup/init":
                 url = (payload.get("remote_url") or "").strip()
                 do_push = bool(payload.get("push")) or bool(url)
-                self._start_job(new_setup_job(bool(url), do_push),
-                                run_setup, payload)
+                self._start_job(new_setup_job(bool(url), do_push), run_setup, payload)
             elif path == "/api/setup/ssh_key":
-                self._json({"pubkey": ensure_ssh_key(),
-                            "path": DEFAULT_SSH_KEY})
+                self._json({"pubkey": ensure_ssh_key(), "path": DEFAULT_SSH_KEY})
             elif path == "/api/migrate/dashboards":
                 restart = bool(payload.get("restart", True))
                 job = migrate.new_dashboards_job(restart)
-                self._start_job(job, migrate.run_migrate_dashboards,
-                                job, restart)
+                self._start_job(job, migrate.run_migrate_dashboards, job, restart)
             elif path == "/api/migrate/helpers":
                 job = migrate.new_helpers_job()
                 self._start_job(job, migrate.run_migrate_helpers, job)
@@ -763,8 +846,10 @@ def main():
     if not TOKEN:
         log("WARNING: SUPERVISOR_TOKEN is not set — backup/reload will fail.")
     ensure_safe_directory()
-    log(f"Serving on :{PORT} — repo={REPO} remote={REMOTE} "
-        f"branch={BRANCH_OPT or '(current)'}")
+    log(
+        f"Serving on :{PORT} — repo={REPO} remote={REMOTE} "
+        f"branch={BRANCH_OPT or '(current)'}"
+    )
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
 
 

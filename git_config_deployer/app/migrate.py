@@ -31,16 +31,35 @@ def init(server_module):
 # Storage-collection helpers that have an equivalent YAML schema where the
 # storage item id doubles as the YAML object_id (entity ids stay identical).
 HELPER_DOMAINS = [
-    "input_boolean", "input_button", "input_datetime", "input_number",
-    "input_select", "input_text", "counter", "timer", "schedule",
+    "input_boolean",
+    "input_button",
+    "input_datetime",
+    "input_number",
+    "input_select",
+    "input_text",
+    "counter",
+    "timer",
+    "schedule",
 ]
 
 # Helpers created as config entries — these have no YAML equivalent and are
 # only counted for the report card.
 CONFIG_ENTRY_HELPERS = {
-    "template", "derivative", "threshold", "integration", "utility_meter",
-    "min_max", "statistics", "trend", "random", "history_stats",
-    "switch_as_x", "group", "tod", "generic_thermostat", "generic_hygrostat",
+    "template",
+    "derivative",
+    "threshold",
+    "integration",
+    "utility_meter",
+    "min_max",
+    "statistics",
+    "trend",
+    "random",
+    "history_stats",
+    "switch_as_x",
+    "group",
+    "tod",
+    "generic_thermostat",
+    "generic_hygrostat",
 }
 
 GENERATED_HEADER = (
@@ -108,8 +127,9 @@ def config_top_keys():
 
 
 def dump_yaml(data):
-    return yaml.safe_dump(data, sort_keys=False, allow_unicode=True,
-                          default_flow_style=False, width=100)
+    return yaml.safe_dump(
+        data, sort_keys=False, allow_unicode=True, default_flow_style=False, width=100
+    )
 
 
 def write_new_file(path, content, created):
@@ -120,7 +140,8 @@ def write_new_file(path, content, created):
                 return  # re-run after a partial failure: already exported
         raise RuntimeError(
             f"Refusing to overwrite existing file "
-            f"'{os.path.relpath(path, S.REPO)}' — move it aside and retry.")
+            f"'{os.path.relpath(path, S.REPO)}' — move it aside and retry."
+        )
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         f.write(content)
@@ -157,23 +178,35 @@ def scan_coverage():
     git_part = {
         "tracked_yaml": sum(1 for p in tracked if p.endswith((".yaml", ".yml"))),
         "core_files": [
-            {"file": fn,
-             "exists": os.path.exists(os.path.join(S.REPO, fn)),
-             "tracked": fn in tracked}
-            for fn in ("configuration.yaml", "automations.yaml",
-                       "scripts.yaml", "scenes.yaml")],
+            {
+                "file": fn,
+                "exists": os.path.exists(os.path.join(S.REPO, fn)),
+                "tracked": fn in tracked,
+            }
+            for fn in (
+                "configuration.yaml",
+                "automations.yaml",
+                "scripts.yaml",
+                "scenes.yaml",
+            )
+        ],
     }
 
     yaml_mode = "lovelace" in keys
     storage_dash = []
     if read_storage("lovelace") is not None:
-        storage_dash.append({"title": "Default dashboard (Overview)",
-                             "url_path": None, "default": True})
+        storage_dash.append(
+            {"title": "Default dashboard (Overview)", "url_path": None, "default": True}
+        )
     for item in storage_items("lovelace_dashboards"):
         if item.get("mode") == "storage":
-            storage_dash.append({
-                "title": item.get("title") or item.get("url_path"),
-                "url_path": item.get("url_path"), "default": False})
+            storage_dash.append(
+                {
+                    "title": item.get("title") or item.get("url_path"),
+                    "url_path": item.get("url_path"),
+                    "default": False,
+                }
+            )
     resources = len(storage_items("lovelace_resources"))
     dashboards = {
         "yaml_mode": yaml_mode,
@@ -187,31 +220,40 @@ def scan_coverage():
         count = len(storage_items(domain))
         in_yaml = domain in keys
         if count or in_yaml:
-            domains.append({"domain": domain, "count": count,
-                            "in_yaml": in_yaml})
+            domains.append({"domain": domain, "count": count, "in_yaml": in_yaml})
     helpers = {
         "domains": domains,
         "storage_total": sum(d["count"] for d in domains),
         "migratable": any(d["count"] and not d["in_yaml"] for d in domains),
-        "blocked": [d["domain"] for d in domains
-                    if d["count"] and d["in_yaml"]],
+        "blocked": [d["domain"] for d in domains if d["count"] and d["in_yaml"]],
     }
 
-    entries = ((read_storage("core.config_entries") or {})
-               .get("data", {}).get("entries", []))
+    entries = (
+        (read_storage("core.config_entries") or {}).get("data", {}).get("entries", [])
+    )
     fixed = {
         "config_entries": len(entries),
-        "helper_entries": sum(1 for e in entries
-                              if e.get("domain") in CONFIG_ENTRY_HELPERS),
-        "devices": len((read_storage("core.device_registry") or {})
-                       .get("data", {}).get("devices", [])),
-        "entities": len((read_storage("core.entity_registry") or {})
-                        .get("data", {}).get("entities", [])),
-        "areas": len((read_storage("core.area_registry") or {})
-                     .get("data", {}).get("areas", [])),
-        "users": sum(1 for u in (read_storage("auth") or {})
-                     .get("data", {}).get("users", [])
-                     if not u.get("system_generated")),
+        "helper_entries": sum(
+            1 for e in entries if e.get("domain") in CONFIG_ENTRY_HELPERS
+        ),
+        "devices": len(
+            (read_storage("core.device_registry") or {})
+            .get("data", {})
+            .get("devices", [])
+        ),
+        "entities": len(
+            (read_storage("core.entity_registry") or {})
+            .get("data", {})
+            .get("entities", [])
+        ),
+        "areas": len(
+            (read_storage("core.area_registry") or {}).get("data", {}).get("areas", [])
+        ),
+        "users": sum(
+            1
+            for u in (read_storage("auth") or {}).get("data", {}).get("users", [])
+            if not u.get("system_generated")
+        ),
     }
 
     return {
@@ -228,25 +270,27 @@ def scan_coverage():
 
 
 def _require_ready_repo():
-    if (not os.path.isdir(os.path.join(S.REPO, ".git"))
-            or S.git("rev-parse", "--verify", "HEAD",
-                     check=False).returncode != 0):
+    if (
+        not os.path.isdir(os.path.join(S.REPO, ".git"))
+        or S.git("rev-parse", "--verify", "HEAD", check=False).returncode != 0
+    ):
         raise RuntimeError(
             "The configuration repository is not set up yet — "
-            "finish the git setup first.")
+            "finish the git setup first."
+        )
     if S.git("status", "--porcelain").stdout.strip():
         raise RuntimeError(
             "Working tree has uncommitted changes. Commit or stash them "
             "first so the migration can be committed (and rolled back) "
-            "cleanly.")
+            "cleanly."
+        )
 
 
 def _backup_step(job, label):
     S.set_step(job, "backup", "running")
     name = f"{label} ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
     S.log(f"Creating full backup: {name}")
-    resp = S.supervisor_call("POST", "/backups/new/full", {"name": name},
-                             timeout=3600)
+    resp = S.supervisor_call("POST", "/backups/new/full", {"name": name}, timeout=3600)
     slug = (resp.get("data") or {}).get("slug")
     if resp.get("result") != "ok" or not slug:
         raise RuntimeError(f"Backup failed: {resp}")
@@ -257,8 +301,7 @@ def _backup_step(job, label):
 def _check_step(job):
     """Run the core config check; return None if valid, error string if not."""
     S.set_step(job, "check", "running")
-    check = S.supervisor_call("POST", "/core/api/config/core/check_config",
-                              timeout=300)
+    check = S.supervisor_call("POST", "/core/api/config/core/check_config", timeout=300)
     if check.get("result") != "valid":
         return str(check.get("errors") or "unknown error")
     S.set_step(job, "check", "done", "Configuration valid")
@@ -266,8 +309,7 @@ def _check_step(job):
 
 
 def _commit_paths(paths, message):
-    rel = [os.path.relpath(p, S.REPO) if os.path.isabs(p) else p
-           for p in paths]
+    rel = [os.path.relpath(p, S.REPO) if os.path.isabs(p) else p for p in paths]
     if not rel:
         return False
     S.git("add", "--", *rel)
@@ -312,8 +354,12 @@ def _fail_job(job, exc, backup_ref):
 def _restart_step(job):
     S.set_step(job, "restart", "running")
     S.supervisor_call("POST", "/core/restart", timeout=600)
-    S.set_step(job, "restart", "done",
-               "Home Assistant is restarting — reload this page in a minute")
+    S.set_step(
+        job,
+        "restart",
+        "done",
+        "Home Assistant is restarting — reload this page in a minute",
+    )
 
 
 # ---------------------------------------------------------------- dashboards
@@ -340,22 +386,26 @@ def _export_dashboards(job, created):
     else:
         # The default dashboard was never edited: keep it auto-generated.
         cfg = {"strategy": {"type": "original-states"}}
-    write_new_file(os.path.join(S.REPO, "ui-lovelace.yaml"),
-                   GENERATED_HEADER + dump_yaml(cfg), created)
+    write_new_file(
+        os.path.join(S.REPO, "ui-lovelace.yaml"),
+        GENERATED_HEADER + dump_yaml(cfg),
+        created,
+    )
     n_dash = 1
 
     dash_cfg = {}
     for item in storage_items("lovelace_dashboards"):
         if item.get("mode") != "storage":
             continue
-        slug = re.sub(r"[^A-Za-z0-9_-]", "-",
-                      item.get("url_path") or item["id"])
+        slug = re.sub(r"[^A-Za-z0-9_-]", "-", item.get("url_path") or item["id"])
         stored = read_storage(f"lovelace.{item['id']}")
-        cfg = (((stored or {}).get("data") or {}).get("config")
-               or {"strategy": {"type": "original-states"}})
+        cfg = ((stored or {}).get("data") or {}).get("config") or {
+            "strategy": {"type": "original-states"}
+        }
         rel = f"dashboards/{slug}.yaml"
-        write_new_file(os.path.join(S.REPO, rel),
-                       GENERATED_HEADER + dump_yaml(cfg), created)
+        write_new_file(
+            os.path.join(S.REPO, rel), GENERATED_HEADER + dump_yaml(cfg), created
+        )
         n_dash += 1
         entry = {
             "mode": "yaml",
@@ -369,19 +419,28 @@ def _export_dashboards(job, created):
         dash_cfg[item.get("url_path") or slug] = entry
 
     lovelace = {"mode": "yaml"}
-    resources = [{"url": r["url"],
-                  "type": r.get("type") or r.get("res_type") or "module"}
-                 for r in storage_items("lovelace_resources") if r.get("url")]
+    resources = [
+        {"url": r["url"], "type": r.get("type") or r.get("res_type") or "module"}
+        for r in storage_items("lovelace_resources")
+        if r.get("url")
+    ]
     if resources:
         lovelace["resources"] = resources
     if dash_cfg:
         lovelace["dashboards"] = dash_cfg
-    write_new_file(os.path.join(S.REPO, "lovelace.yaml"),
-                   GENERATED_HEADER + dump_yaml(lovelace), created)
+    write_new_file(
+        os.path.join(S.REPO, "lovelace.yaml"),
+        GENERATED_HEADER + dump_yaml(lovelace),
+        created,
+    )
 
-    S.set_step(job, "export", "done",
-               f"{n_dash} dashboard(s) + lovelace.yaml"
-               + (f", {len(resources)} resource(s)" if resources else ""))
+    S.set_step(
+        job,
+        "export",
+        "done",
+        f"{n_dash} dashboard(s) + lovelace.yaml"
+        + (f", {len(resources)} resource(s)" if resources else ""),
+    )
     return n_dash
 
 
@@ -393,11 +452,12 @@ def run_migrate_dashboards(job, restart):
         cov = scan_coverage()["dashboards"]
         if cov["yaml_mode"] and not (cov["storage"] or cov["resources"]):
             raise RuntimeError(
-                "Dashboards are already in YAML mode — nothing to migrate.")
+                "Dashboards are already in YAML mode — nothing to migrate."
+            )
         if not (cov["storage"] or cov["resources"]):
             raise RuntimeError(
-                "No UI-managed dashboards or resources found — "
-                "nothing to migrate.")
+                "No UI-managed dashboards or resources found — nothing to migrate."
+            )
 
         backup_ref = _backup_step(job, "Before dashboard YAML migration")
 
@@ -409,23 +469,32 @@ def run_migrate_dashboards(job, restart):
         snippet = "lovelace: !include lovelace.yaml"
         if "lovelace" in config_top_keys():
             # Conflict: keep the export (committed), let the user merge.
-            _commit_paths(created, "Export UI dashboards to YAML "
-                                   "(manual lovelace merge required)")
-            S.set_step(job, "configure", "error",
-                       "configuration.yaml already has a 'lovelace:' "
-                       "section — merge manually (see below).")
+            _commit_paths(
+                created, "Export UI dashboards to YAML (manual lovelace merge required)"
+            )
+            S.set_step(
+                job,
+                "configure",
+                "error",
+                "configuration.yaml already has a 'lovelace:' "
+                "section — merge manually (see below).",
+            )
             _skip_pending(job, "Waiting for the manual merge.")
-            job["result"] = {"ok": False, "message": (
-                "The dashboards were exported and committed, but "
-                "configuration.yaml already contains a 'lovelace:' section, "
-                "so it was not changed automatically. Merge the contents of "
-                "lovelace.yaml into that section (or replace it with "
-                f"'{snippet}'), commit, and restart Home Assistant."),
-                "backup": backup_ref}
+            job["result"] = {
+                "ok": False,
+                "message": (
+                    "The dashboards were exported and committed, but "
+                    "configuration.yaml already contains a 'lovelace:' section, "
+                    "so it was not changed automatically. Merge the contents of "
+                    "lovelace.yaml into that section (or replace it with "
+                    f"'{snippet}'), commit, and restart Home Assistant."
+                ),
+                "backup": backup_ref,
+            }
             return
         append_to_config(
-            [snippet],
-            "Dashboards exported from the UI — now managed as YAML in git")
+            [snippet], "Dashboards exported from the UI — now managed as YAML in git"
+        )
         S.set_step(job, "configure", "done", snippet)
 
         # check -------------------------------------------------------
@@ -434,35 +503,53 @@ def run_migrate_dashboards(job, restart):
             _rollback_files(created)
             S.set_step(job, "check", "error", errors)
             _skip_pending(job, "Rolled back — nothing was committed.")
-            job["result"] = {"ok": False, "message": (
-                "The exported configuration did not pass the config check; "
-                "all changes were rolled back (dashboards are unchanged). "
-                f"Error: {errors}"), "backup": backup_ref}
+            job["result"] = {
+                "ok": False,
+                "message": (
+                    "The exported configuration did not pass the config check; "
+                    "all changes were rolled back (dashboards are unchanged). "
+                    f"Error: {errors}"
+                ),
+                "backup": backup_ref,
+            }
             return
 
         # commit --------------------------------------------------------
         S.set_step(job, "commit", "running")
-        _commit_paths(created + ["configuration.yaml"],
-                      "Migrate dashboards to Lovelace YAML mode")
+        _commit_paths(
+            created + ["configuration.yaml"], "Migrate dashboards to Lovelace YAML mode"
+        )
         head = S.commit_info("HEAD")
-        S.set_step(job, "commit", "done",
-                   f"{head['short']} — {len(created)} file(s) "
-                   "+ configuration.yaml")
+        S.set_step(
+            job,
+            "commit",
+            "done",
+            f"{head['short']} — {len(created)} file(s) + configuration.yaml",
+        )
 
         if restart:
             _restart_step(job)
 
-        job["result"] = {"ok": True, "message": (
-            "Dashboards are now YAML files in the repository — edit them "
-            "via git from now on (the UI dashboard editor is disabled in "
-            "YAML mode). "
-            + ("Home Assistant is restarting to activate YAML mode; reload "
-               "this page in a minute."
-               if restart else
-               "Restart Home Assistant to activate YAML mode.")
-            + (f" Restore point: backup “{backup_ref['name']}”."
-               if backup_ref else "")),
-            "backup": backup_ref}
+        job["result"] = {
+            "ok": True,
+            "message": (
+                "Dashboards are now YAML files in the repository — edit them "
+                "via git from now on (the UI dashboard editor is disabled in "
+                "YAML mode). "
+                + (
+                    "Home Assistant is restarting to activate YAML mode; reload "
+                    "this page in a minute."
+                    if restart
+                    else "Restart Home Assistant to activate YAML mode."
+                )
+                + (
+                    f" Restore point: backup “{backup_ref['name']}”."
+                    if backup_ref
+                    else ""
+                )
+            ),
+            "backup": backup_ref,
+        }
         S.log("Dashboard migration finished")
     except Exception as exc:  # noqa: BLE001 — surfaced to the UI
         _fail_job(job, exc, backup_ref)
@@ -474,15 +561,18 @@ def run_migrate_dashboards(job, restart):
 
 
 def new_helpers_job():
-    return S.make_job("migrate_helpers", [
-        ("backup", "Create full backup"),
-        ("export", "Export helpers to YAML files"),
-        ("configure", "Reference helper files in configuration.yaml"),
-        ("check", "Check configuration"),
-        ("commit", "Commit to git"),
-        ("storage", "Remove migrated helpers from UI storage"),
-        ("restart", "Restart Home Assistant"),
-    ])
+    return S.make_job(
+        "migrate_helpers",
+        [
+            ("backup", "Create full backup"),
+            ("export", "Export helpers to YAML files"),
+            ("configure", "Reference helper files in configuration.yaml"),
+            ("check", "Check configuration"),
+            ("commit", "Commit to git"),
+            ("storage", "Remove migrated helpers from UI storage"),
+            ("restart", "Restart Home Assistant"),
+        ],
+    )
 
 
 def run_migrate_helpers(job):
@@ -504,9 +594,13 @@ def run_migrate_helpers(job):
         if not domains:
             raise RuntimeError(
                 "No migratable UI helpers found."
-                + (f" Skipped domains already present in configuration.yaml:"
-                   f" {', '.join(skipped)} — merge those manually."
-                   if skipped else ""))
+                + (
+                    f" Skipped domains already present in configuration.yaml:"
+                    f" {', '.join(skipped)} — merge those manually."
+                    if skipped
+                    else ""
+                )
+            )
 
         backup_ref = _backup_step(job, "Before helper YAML migration")
 
@@ -515,19 +609,27 @@ def run_migrate_helpers(job):
         for domain, items in domains:
             data = {}
             for item in items:
-                data[item["id"]] = {k: v for k, v in item.items()
-                                    if k != "id" and v is not None}
-            write_new_file(os.path.join(S.REPO, f"helpers/{domain}.yaml"),
-                           GENERATED_HEADER + dump_yaml(data), created)
-        S.set_step(job, "export", "done",
-                   f"{total} helper(s): " + ", ".join(
-                       f"{d} ×{len(i)}" for d, i in domains))
+                data[item["id"]] = {
+                    k: v for k, v in item.items() if k != "id" and v is not None
+                }
+            write_new_file(
+                os.path.join(S.REPO, f"helpers/{domain}.yaml"),
+                GENERATED_HEADER + dump_yaml(data),
+                created,
+            )
+        S.set_step(
+            job,
+            "export",
+            "done",
+            f"{total} helper(s): " + ", ".join(f"{d} ×{len(i)}" for d, i in domains),
+        )
 
         # configuration.yaml -------------------------------------------
         S.set_step(job, "configure", "running")
         lines = [f"{d}: !include helpers/{d}.yaml" for d, _ in domains]
         append_to_config(
-            lines, "Helpers exported from the UI — now managed as YAML in git")
+            lines, "Helpers exported from the UI — now managed as YAML in git"
+        )
         S.set_step(job, "configure", "done", "; ".join(lines))
 
         # check ---------------------------------------------------------
@@ -536,25 +638,33 @@ def run_migrate_helpers(job):
             _rollback_files(created)
             S.set_step(job, "check", "error", errors)
             _skip_pending(job, "Rolled back — nothing was changed.")
-            job["result"] = {"ok": False, "message": (
-                "The exported helpers did not pass the config check; all "
-                "changes were rolled back (helpers are unchanged). "
-                f"Error: {errors}"), "backup": backup_ref}
+            job["result"] = {
+                "ok": False,
+                "message": (
+                    "The exported helpers did not pass the config check; all "
+                    "changes were rolled back (helpers are unchanged). "
+                    f"Error: {errors}"
+                ),
+                "backup": backup_ref,
+            }
             return
 
         # commit --------------------------------------------------------
         S.set_step(job, "commit", "running")
-        _commit_paths(created + ["configuration.yaml"],
-                      "Migrate UI helpers to YAML")
+        _commit_paths(created + ["configuration.yaml"], "Migrate UI helpers to YAML")
         head = S.commit_info("HEAD")
-        S.set_step(job, "commit", "done",
-                   f"{head['short']} — {len(created)} file(s) "
-                   "+ configuration.yaml")
+        S.set_step(
+            job,
+            "commit",
+            "done",
+            f"{head['short']} — {len(created)} file(s) + configuration.yaml",
+        )
 
         # remove from storage (originals are kept in /data) --------------
         S.set_step(job, "storage", "running")
-        bdir = os.path.join(MIGRATION_BACKUP_DIR,
-                            datetime.now().strftime("%Y%m%d-%H%M%S"))
+        bdir = os.path.join(
+            MIGRATION_BACKUP_DIR, datetime.now().strftime("%Y%m%d-%H%M%S")
+        )
         os.makedirs(bdir, exist_ok=True)
         moved = 0
         for domain, _ in domains:
@@ -562,26 +672,39 @@ def run_migrate_helpers(job):
             if os.path.exists(src):
                 shutil.move(src, os.path.join(bdir, domain + ".json"))
                 moved += 1
-        S.set_step(job, "storage", "done",
-                   f"Moved {moved} storage file(s) to {bdir} "
-                   "(kept as a safety net)")
+        S.set_step(
+            job,
+            "storage",
+            "done",
+            f"Moved {moved} storage file(s) to {bdir} (kept as a safety net)",
+        )
 
         # restart (mandatory: HA must drop the old in-memory helpers) ----
         _restart_step(job)
 
-        job["result"] = {"ok": True, "message": (
-            f"Migrated {total} helper(s) "
-            f"({', '.join(d for d, _ in domains)}) to YAML files under "
-            "helpers/ and committed them. Entity IDs are unchanged, so "
-            "automations and history keep working. Home Assistant is "
-            "restarting to load them — reload this page in a minute. "
-            "From now on these helpers are edited via git, not the UI."
-            + (f" Skipped (already defined in configuration.yaml): "
-               f"{', '.join(skipped)} — merge those manually."
-               if skipped else "")
-            + (f" Restore point: backup “{backup_ref['name']}”."
-               if backup_ref else "")),
-            "backup": backup_ref}
+        job["result"] = {
+            "ok": True,
+            "message": (
+                f"Migrated {total} helper(s) "
+                f"({', '.join(d for d, _ in domains)}) to YAML files under "
+                "helpers/ and committed them. Entity IDs are unchanged, so "
+                "automations and history keep working. Home Assistant is "
+                "restarting to load them — reload this page in a minute. "
+                "From now on these helpers are edited via git, not the UI."
+                + (
+                    f" Skipped (already defined in configuration.yaml): "
+                    f"{', '.join(skipped)} — merge those manually."
+                    if skipped
+                    else ""
+                )
+                + (
+                    f" Restore point: backup “{backup_ref['name']}”."
+                    if backup_ref
+                    else ""
+                )
+            ),
+            "backup": backup_ref,
+        }
         S.log("Helper migration finished")
     except Exception as exc:  # noqa: BLE001 — surfaced to the UI
         _fail_job(job, exc, backup_ref)
